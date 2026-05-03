@@ -5,7 +5,9 @@ import {
   FetchArgs,
   FetchBaseQueryError,
 } from "@reduxjs/toolkit/query/react";
+import { DateTime } from "luxon";
 import { config } from "../../config";
+import { utcTaskDayStartIso } from "../../utils/utcTaskDay";
 
 /** Narrow state for headers only — avoids importing `store.ts` (circular: store → api → store). */
 type StateForAuthHeader = { auth: { accessToken: string | null } };
@@ -96,11 +98,14 @@ export const api = createApi({
       query: (id) => ({ url: `/tasks/${id}/toggle`, method: "PATCH" }),
       // optimistic update — UI flips instantly
       async onQueryStarted(id, { dispatch, queryFulfilled }) {
-        const today = new Date().toISOString().split("T")[0];
+        const today = utcTaskDayStartIso();
         const patch = dispatch(
           api.util.updateQueryData("getTasks", today, (draft) => {
             const t = draft.find((task) => task.id === id);
-            if (t) t.doneAt = t.doneAt ? null : new Date().toISOString();
+            if (t)
+              t.doneAt = t.doneAt
+                ? null
+                : DateTime.utc().toISO({ suppressMilliseconds: true })!;
           }),
         );
         try {

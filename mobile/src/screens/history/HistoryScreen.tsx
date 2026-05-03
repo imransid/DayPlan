@@ -5,16 +5,13 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Heading } from '../../components/UI';
 import { colors, spacing, radius } from '../../theme';
 import { useGetTaskHistoryQuery } from '../../store/api/api';
+import { utcHistoryRangeIso } from '../../utils/utcTaskDay';
+import { DateTime } from 'luxon';
 
 export function HistoryScreen() {
-  const to = new Date();
-  const from = new Date();
-  from.setDate(from.getDate() - 30);
+  const { from, to } = utcHistoryRangeIso(30);
 
-  const { data: byDate = {}, isLoading } = useGetTaskHistoryQuery({
-    from: from.toISOString().split('T')[0],
-    to: to.toISOString().split('T')[0],
-  });
+  const { data: byDate = {}, isLoading } = useGetTaskHistoryQuery({ from, to });
 
   const dates = Object.keys(byDate).sort().reverse();
 
@@ -35,7 +32,7 @@ export function HistoryScreen() {
               <View key={date} style={styles.dayCard}>
                 <View style={styles.dayHeader}>
                   <Text style={styles.dayDate}>
-                    {new Date(date).toLocaleDateString(undefined, {
+                    {DateTime.fromISO(date, { zone: 'utc' }).toLocaleString({
                       weekday: 'short',
                       month: 'short',
                       day: 'numeric',

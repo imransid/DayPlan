@@ -16,7 +16,9 @@ export interface User {
 export interface Task {
   id: string;
   title: string;
+  /** ISO 8601 UTC, task calendar day at `T00:00:00.000Z` */
   date: string;
+  /** ISO 8601 UTC instant, or null */
   doneAt: string | null;
   position: number;
 }

@@ -1,8 +1,10 @@
 'use client';
 
 import { useQuery } from '@tanstack/react-query';
+import { DateTime } from 'luxon';
 import { api } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
+import { utcHistoryRangeIso } from '@/lib/utcTaskDay';
 
 interface Task {
   id: string;
@@ -14,26 +16,23 @@ interface Task {
 export default function StatsPage() {
   const token = useAuth((s) => s.token);
 
-  const to = new Date().toISOString().split('T')[0];
-  const fromDate = new Date();
-  fromDate.setDate(fromDate.getDate() - 7);
-  const from = fromDate.toISOString().split('T')[0];
+  const { from, to } = utcHistoryRangeIso(6);
 
   const { data: byDate = {}, isLoading } = useQuery({
     queryKey: ['stats', from, to],
-    queryFn: () => api<Record<string, Task[]>>(`/tasks/history?from=${from}&to=${to}`, { token }),
+    queryFn: () =>
+      api<Record<string, Task[]>>(
+        `/tasks/history?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`,
+        { token },
+      ),
   });
 
   const allTasks = Object.values(byDate).flat();
   const totalDone = allTasks.filter((t) => t.doneAt).length;
   const totalRate = allTasks.length > 0 ? Math.round((totalDone / allTasks.length) * 100) : 0;
 
-  // Build last-7-days series
-  const days = Array.from({ length: 7 }, (_, i) => {
-    const d = new Date();
-    d.setDate(d.getDate() - (6 - i));
-    return d.toISOString().split('T')[0];
-  });
+  const toDay = DateTime.utc().startOf('day');
+  const days = Array.from({ length: 7 }, (_, i) => toDay.minus({ days: 6 - i }).toISODate()!);
 
   return (
     <div>
@@ -56,7 +55,7 @@ export default function StatsPage() {
                 const tasks = byDate[date] ?? [];
                 const done = tasks.filter((t) => t.doneAt).length;
                 const pct = tasks.length > 0 ? Math.round((done / tasks.length) * 100) : 0;
-                const label = new Date(date).toLocaleDateString(undefined, { weekday: 'short' })[0];
+                const label = DateTime.fromISO(date, { zone: 'utc' }).toFormat('ccc');
                 return (
                   <div key={date} className="flex-1 flex flex-col items-center gap-2">
                     <div className="w-full bg-surface-alt rounded-t flex flex-col justify-end" style={{ height: '100px' }}>

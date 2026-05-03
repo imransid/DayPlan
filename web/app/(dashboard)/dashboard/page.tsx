@@ -2,9 +2,11 @@
 
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { DateTime } from 'luxon';
 import { Plus, Check } from 'lucide-react';
 import { api } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
+import { utcTaskDayStartIso } from '@/lib/utcTaskDay';
 import { cn } from '@/lib/utils';
 
 interface Task {
@@ -20,11 +22,11 @@ export default function DashboardPage() {
   const queryClient = useQueryClient();
   const [newTask, setNewTask] = useState('');
 
-  const today = new Date().toISOString().split('T')[0];
+  const today = utcTaskDayStartIso();
 
   const { data: tasks = [], isLoading } = useQuery({
     queryKey: ['tasks', today],
-    queryFn: () => api<Task[]>(`/tasks?date=${today}`, { token }),
+    queryFn: () => api<Task[]>(`/tasks?date=${encodeURIComponent(today)}`, { token }),
   });
 
   const createTask = useMutation({
@@ -42,7 +44,16 @@ export default function DashboardPage() {
       await queryClient.cancelQueries({ queryKey: ['tasks', today] });
       const previous = queryClient.getQueryData<Task[]>(['tasks', today]);
       queryClient.setQueryData<Task[]>(['tasks', today], (old) =>
-        old?.map((t) => (t.id === id ? { ...t, doneAt: t.doneAt ? null : new Date().toISOString() } : t)),
+        old?.map((t) =>
+          t.id === id
+            ? {
+                ...t,
+                doneAt: t.doneAt
+                  ? null
+                  : DateTime.utc().toISO({ suppressMilliseconds: true })!,
+              }
+            : t,
+        ),
       );
       return { previous };
     },
@@ -61,7 +72,7 @@ export default function DashboardPage() {
   const pct = tasks.length > 0 ? Math.round((done.length / tasks.length) * 100) : 0;
 
   const formatDate = () =>
-    new Date().toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' });
+    DateTime.utc().toLocaleString({ weekday: 'long', month: 'long', day: 'numeric' });
 
   return (
     <div>

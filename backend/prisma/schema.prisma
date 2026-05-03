@@ -85,6 +85,10 @@ model DiscordChannel {
   lastPostedAt DateTime?
   lastError    String?
 
+  // Incoming webhook (our app) so posts can use a custom Discord username.
+  webhookId    String?
+  webhookToken String?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 

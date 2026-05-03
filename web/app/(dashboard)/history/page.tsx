@@ -1,8 +1,10 @@
 'use client';
 
 import { useQuery } from '@tanstack/react-query';
+import { DateTime } from 'luxon';
 import { api } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
+import { utcHistoryRangeIso } from '@/lib/utcTaskDay';
 
 interface Task {
   id: string;
@@ -14,14 +16,15 @@ interface Task {
 export default function HistoryPage() {
   const token = useAuth((s) => s.token);
 
-  const to = new Date().toISOString().split('T')[0];
-  const fromDate = new Date();
-  fromDate.setDate(fromDate.getDate() - 30);
-  const from = fromDate.toISOString().split('T')[0];
+  const { from, to } = utcHistoryRangeIso(30);
 
   const { data: byDate = {}, isLoading } = useQuery({
     queryKey: ['history', from, to],
-    queryFn: () => api<Record<string, Task[]>>(`/tasks/history?from=${from}&to=${to}`, { token }),
+    queryFn: () =>
+      api<Record<string, Task[]>>(
+        `/tasks/history?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`,
+        { token },
+      ),
   });
 
   const dates = Object.keys(byDate).sort().reverse();
@@ -47,7 +50,7 @@ export default function HistoryPage() {
               <div key={date} className="card">
                 <div className="flex justify-between items-baseline mb-2">
                   <h3 className="font-medium">
-                    {new Date(date).toLocaleDateString(undefined, {
+                    {DateTime.fromISO(date, { zone: 'utc' }).toLocaleString({
                       weekday: 'long',
                       month: 'short',
                       day: 'numeric',

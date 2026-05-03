@@ -48,8 +48,13 @@ export class DiscordPosterService {
 
   // ─── Shared posting pipeline ────────────────────────────────────────────
   private async run(userId: string, kind: PostKind): Promise<PostResult> {
-    const user = await this.prisma.user.findUnique({ where: { id: userId } });
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { id: true, name: true, email: true },
+    });
     if (!user) return { posted: 0, failed: 0, results: [] };
+
+    const discordUsername = this.displayNameForDiscord(user);
 
     const today = utcTodayStartForDb();
 
@@ -108,7 +113,7 @@ export class DiscordPosterService {
                     dateLabel,
                   );
 
-          await this.api.postMessage(channel.channelId, payload);
+          await this.deliverDiscordMessage(channel, payload, discordUsername);
 
           await this.prisma.discordChannel.update({
             where: { id: channel.id },
@@ -160,6 +165,78 @@ export class DiscordPosterService {
     const posted = results.filter((r) => r.status === "success").length;
     const failed = results.filter((r) => r.status === "failed").length;
     return { posted, failed, results };
+  }
+
+  /** Discord max length for webhook `username`. */
+  private displayNameForDiscord(user: {
+    name: string | null;
+    email: string;
+  }): string {
+    const trimmed = user.name?.trim();
+    if (trimmed) return trimmed.slice(0, 80);
+    const local = user.email.split("@")[0] || "DayPlan";
+    return local.slice(0, 80);
+  }
+
+  /**
+   * Posts via an incoming webhook with the user's display name when possible.
+   * Falls back to the bot if webhooks are unavailable (missing Manage Webhooks, etc.).
+   */
+  private async deliverDiscordMessage(
+    channel: {
+      id: string;
+      channelId: string;
+      webhookId: string | null;
+      webhookToken: string | null;
+    },
+    payload: { content?: string; embeds?: unknown[] },
+    username: string,
+  ): Promise<void> {
+    try {
+      let wid = channel.webhookId;
+      let wtoken = channel.webhookToken;
+
+      if (!wid || !wtoken) {
+        const w = await this.api.ensurePostingWebhook(channel.channelId);
+        wid = w.id;
+        wtoken = w.token;
+        await this.prisma.discordChannel.update({
+          where: { id: channel.id },
+          data: { webhookId: wid, webhookToken: wtoken },
+        });
+      }
+
+      const sendWebhook = () =>
+        this.api.executeWebhook(wid!, wtoken!, { ...payload, username });
+
+      try {
+        await sendWebhook();
+      } catch (err: any) {
+        const code = err?.response?.status;
+        if (code === 401 || code === 404) {
+          await this.prisma.discordChannel.update({
+            where: { id: channel.id },
+            data: { webhookId: null, webhookToken: null },
+          });
+          const w = await this.api.ensurePostingWebhook(channel.channelId);
+          await this.prisma.discordChannel.update({
+            where: { id: channel.id },
+            data: { webhookId: w.id, webhookToken: w.token },
+          });
+          wid = w.id;
+          wtoken = w.token;
+          await this.api.executeWebhook(wid, wtoken, { ...payload, username });
+        } else {
+          throw err;
+        }
+      }
+    } catch (err: any) {
+      const hint = err?.response?.data?.message ?? err?.message ?? err;
+      this.logger.warn(
+        `Webhook post as "${username}" failed (${hint}) — using bot`,
+      );
+      await this.api.postMessage(channel.channelId, payload);
+    }
   }
 
   // Per-kind WHERE clause for channels:

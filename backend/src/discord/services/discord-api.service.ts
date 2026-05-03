@@ -5,6 +5,9 @@ import axios, { AxiosInstance } from 'axios';
 import { resolveDiscordEnv } from '../../common/config/discord-env';
 
 const DISCORD_API = 'https://discord.com/api/v10';
+/** Incoming webhook type — see Discord WebhookType */
+const WEBHOOK_TYPE_INCOMING = 1;
+const DAYPLAN_WEBHOOK_NAME = 'DayPlan';
 /** OAuth2 authorize page — see https://discord.com/developers/docs/topics/oauth2 */
 const DISCORD_OAUTH_AUTHORIZE = 'https://discord.com/oauth2/authorize';
 
@@ -66,7 +69,8 @@ export class DiscordApiService {
     // or the authorize page returns a generic "Invalid Form Body" error.
     const params = new URLSearchParams({
       client_id: this.clientId,
-      permissions: '2048', // Send Messages
+      // Send Messages + Manage Webhooks (create/list channel webhooks for “post as user name”)
+      permissions: String(2048 | (1 << 29)),
       scope: 'bot applications.commands identify guilds',
       response_type: 'code',
       redirect_uri: this.redirectUri,
@@ -103,6 +107,58 @@ export class DiscordApiService {
     payload: { content?: string; embeds?: any[] },
   ): Promise<{ id: string }> {
     const { data } = await this.bot.post(`/channels/${channelId}/messages`, payload);
+    return { id: data.id };
+  }
+
+  /**
+   * Finds or creates an incoming webhook owned by this application so we can execute it with a
+   * custom username (Discord does not allow overriding the bot name on normal bot messages).
+   */
+  async ensurePostingWebhook(channelId: string): Promise<{ id: string; token: string }> {
+    const { data } = await this.bot.get<
+      Array<{
+        id: string;
+        token?: string;
+        type: number;
+        name: string | null;
+        application_id: string | null;
+      }>
+    >(`/channels/${channelId}/webhooks`);
+
+    const ours = data.find(
+      (w) =>
+        w.type === WEBHOOK_TYPE_INCOMING &&
+        w.application_id === this.clientId &&
+        w.token &&
+        (w.name === DAYPLAN_WEBHOOK_NAME || w.name?.startsWith('DayPlan')),
+    );
+    if (ours?.token) {
+      return { id: ours.id, token: ours.token };
+    }
+
+    const { data: created } = await this.bot.post<{ id: string; token: string }>(
+      `/channels/${channelId}/webhooks`,
+      { name: DAYPLAN_WEBHOOK_NAME },
+    );
+    return { id: created.id, token: created.token };
+  }
+
+  /** POST as webhook — appears in chat with optional username / avatar_url. */
+  async executeWebhook(
+    webhookId: string,
+    webhookToken: string,
+    body: {
+      content?: string;
+      embeds?: any[];
+      username?: string;
+      avatar_url?: string;
+    },
+  ): Promise<{ id: string }> {
+    const { data } = await axios.post<{ id: string }>(
+      `${DISCORD_API}/webhooks/${webhookId}/${webhookToken}`,
+      body,
+      { params: { wait: 'true' } },
+    );
     return { id: data.id };
   }
 }

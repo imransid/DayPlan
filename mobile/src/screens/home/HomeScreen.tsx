@@ -22,10 +22,12 @@ import {
   useDeleteTaskMutation,
 } from '../../store/api/api';
 import { scheduleHourlyReminders, requestPermissions } from '../../services/notifications';
+import { utcTaskDayStartIso } from '../../utils/utcTaskDay';
 import type { Task } from '../../types';
+import { DateTime } from 'luxon';
 
 export function HomeScreen() {
-  const today = new Date().toISOString().split('T')[0];
+  const today = utcTaskDayStartIso();
   const { data: tasks = [], isLoading, refetch } = useGetTasksQuery(today);
   const [createTask, { isLoading: creating }] = useCreateTaskMutation();
   const [toggleTask] = useToggleTaskMutation();
@@ -54,14 +56,12 @@ export function HomeScreen() {
     await createTask({ title, date: today });
   };
 
-  const formatDate = () => {
-    const d = new Date();
-    return d.toLocaleDateString(undefined, {
+  const formatDate = () =>
+    DateTime.utc().toLocaleString({
       weekday: 'long',
       month: 'long',
       day: 'numeric',
     });
-  };
 
   return (
     <SafeAreaView style={styles.safe}>
