@@ -1,0 +1,16 @@
+diff --git a/android/src/main/java/com/swmansion/rnscreens/safearea/SafeAreaView.kt b/android/src/main/java/com/swmansion/rnscreens/safearea/SafeAreaView.kt
+index cb31893f689c7f771b590d6da5a94f70be5e9773..ac2f3e53dda8429b6b6e47ab02aed0b2f0d17b53 100644
+--- a/android/src/main/java/com/swmansion/rnscreens/safearea/SafeAreaView.kt
++++ b/android/src/main/java/com/swmansion/rnscreens/safearea/SafeAreaView.kt
+@@ -106,8 +106,9 @@ class SafeAreaView(
+         val newSystemInsets =
+             insets.getInsets(WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout())
+ 
+-        if (newSystemInsets != currentSystemInsets) {
+-            currentSystemInsets = EdgeInsets.fromInsets(newSystemInsets)
++        val newSystemEdgeInsets = EdgeInsets.fromInsets(newSystemInsets)
++        if (newSystemEdgeInsets != currentSystemInsets) {
++            currentSystemInsets = newSystemEdgeInsets
+ 
+             if (insetType.containsSystem()) {
+                 needsInsetsUpdate = true

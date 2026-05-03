@@ -1,0 +1,15 @@
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: dayplan
+      POSTGRES_PASSWORD: dayplan
+      POSTGRES_DB: dayplan
+    ports:
+      - "5432:5432"
+    volumes:
+      - dayplan-db:/var/lib/postgresql/data
+
+volumes:
+  dayplan-db:
