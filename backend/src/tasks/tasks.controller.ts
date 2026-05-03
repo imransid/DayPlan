@@ -46,7 +46,7 @@ export class TasksController {
     @CurrentUser() user: AuthUser,
     @Query('date') date?: string,
   ): Promise<TaskResponseDto[]> {
-    const target = date ?? new Date().toISOString().split('T')[0];
+    const target = date?.trim() || undefined;
     return this.queryBus.execute(new GetTasksByDateQuery(user.userId, target));
   }
 

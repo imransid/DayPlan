@@ -1,5 +1,6 @@
 import { Injectable, Logger } from "@nestjs/common";
 import { DateTime } from "luxon";
+import { utcNowJsDate, utcTodayStartForDb } from "../../common/utc-datetime";
 import { PrismaService } from "../../prisma/prisma.service";
 import { DiscordApiService } from "./discord-api.service";
 import { MessageFormatterService } from "./message-formatter.service";
@@ -50,10 +51,7 @@ export class DiscordPosterService {
     const user = await this.prisma.user.findUnique({ where: { id: userId } });
     if (!user) return { posted: 0, failed: 0, results: [] };
 
-    const today = DateTime.now()
-      .setZone(user.timezone)
-      .startOf("day")
-      .toJSDate();
+    const today = utcTodayStartForDb();
 
     const tasks = await this.prisma.task.findMany({
       where: { userId, date: today },
@@ -85,9 +83,7 @@ export class DiscordPosterService {
       },
     });
 
-    const dateLabel = DateTime.fromJSDate(today)
-      .setZone(user.timezone)
-      .toFormat("LLLL d");
+    const dateLabel = DateTime.utc().toFormat("LLLL d");
     const results: PostResult["results"] = [];
 
     for (const conn of connections) {
@@ -116,7 +112,7 @@ export class DiscordPosterService {
 
           await this.prisma.discordChannel.update({
             where: { id: channel.id },
-            data: { lastPostedAt: new Date(), lastError: null },
+            data: { lastPostedAt: utcNowJsDate(), lastError: null },
           });
           await this.prisma.postLog.create({
             data: {

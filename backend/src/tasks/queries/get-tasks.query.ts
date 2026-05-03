@@ -1,12 +1,19 @@
 import { Injectable } from '@nestjs/common';
 import { IQuery, IQueryHandler, QueryHandler } from '@nestjs/cqrs';
+import {
+  parseTaskDateFromApi,
+  utcCalendarDateKey,
+  utcTodayStartForDb,
+} from '../../common/utc-datetime';
 import { PrismaService } from '../../prisma/prisma.service';
 import { TaskResponseDto } from '../dto/task.dto';
+import { toTaskResponseDto } from '../task-response.mapper';
 
 export class GetTasksByDateQuery implements IQuery {
   constructor(
     public readonly userId: string,
-    public readonly date: string,
+    /** ISO UTC / YYYY-MM-DD, or omit for current UTC calendar day */
+    public readonly date?: string,
   ) {}
 }
 
@@ -16,21 +23,15 @@ export class GetTasksByDateHandler implements IQueryHandler<GetTasksByDateQuery,
   constructor(private readonly prisma: PrismaService) {}
 
   async execute(query: GetTasksByDateQuery): Promise<TaskResponseDto[]> {
-    const date = new Date(query.date);
-    date.setUTCHours(0, 0, 0, 0);
+    const trimmed = query.date?.trim();
+    const date = trimmed ? parseTaskDateFromApi(trimmed) : utcTodayStartForDb();
 
     const tasks = await this.prisma.task.findMany({
       where: { userId: query.userId, date },
       orderBy: [{ position: 'asc' }, { createdAt: 'asc' }],
     });
 
-    return tasks.map((t) => ({
-      id: t.id,
-      title: t.title,
-      date: t.date.toISOString().split('T')[0],
-      doneAt: t.doneAt?.toISOString() ?? null,
-      position: t.position,
-    }));
+    return tasks.map((t) => toTaskResponseDto(t));
   }
 }
 
@@ -50,8 +51,8 @@ export class GetTasksHistoryHandler
   constructor(private readonly prisma: PrismaService) {}
 
   async execute(query: GetTasksHistoryQuery): Promise<Record<string, TaskResponseDto[]>> {
-    const from = new Date(query.fromDate);
-    const to = new Date(query.toDate);
+    const from = parseTaskDateFromApi(query.fromDate);
+    const to = parseTaskDateFromApi(query.toDate);
 
     const tasks = await this.prisma.task.findMany({
       where: { userId: query.userId, date: { gte: from, lte: to } },
@@ -60,15 +61,9 @@ export class GetTasksHistoryHandler
 
     const grouped: Record<string, TaskResponseDto[]> = {};
     for (const t of tasks) {
-      const dateKey = t.date.toISOString().split('T')[0];
+      const dateKey = utcCalendarDateKey(t.date);
       grouped[dateKey] ??= [];
-      grouped[dateKey].push({
-        id: t.id,
-        title: t.title,
-        date: dateKey,
-        doneAt: t.doneAt?.toISOString() ?? null,
-        position: t.position,
-      });
+      grouped[dateKey].push(toTaskResponseDto(t));
     }
     return grouped;
   }

@@ -2,6 +2,7 @@ import { Injectable, NotFoundException } from '@nestjs/common';
 import { CommandHandler, ICommand, ICommandHandler } from '@nestjs/cqrs';
 import { PrismaService } from '../../prisma/prisma.service';
 import { TaskResponseDto } from '../dto/task.dto';
+import { toTaskResponseDto } from '../task-response.mapper';
 
 export class UpdateTaskCommand implements ICommand {
   constructor(
@@ -33,13 +34,7 @@ export class UpdateTaskHandler implements ICommandHandler<UpdateTaskCommand, Tas
       },
     });
 
-    return {
-      id: task.id,
-      title: task.title,
-      date: task.date.toISOString().split('T')[0],
-      doneAt: task.doneAt?.toISOString() ?? null,
-      position: task.position,
-    };
+    return toTaskResponseDto(task);
   }
 }
 

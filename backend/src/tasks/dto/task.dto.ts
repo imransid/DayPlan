@@ -7,7 +7,10 @@ export class CreateTaskDto {
   @MaxLength(200)
   title!: string;
 
-  @ApiProperty({ example: '2026-05-03', description: 'YYYY-MM-DD; defaults to today' })
+  @ApiProperty({
+    example: '2026-05-03T00:00:00.000Z',
+    description: 'ISO 8601 UTC (calendar day); date-only YYYY-MM-DD also accepted. Defaults to current UTC day.',
+  })
   @IsDateString()
   @IsOptional()
   date?: string;
@@ -40,7 +43,7 @@ export class TaskResponseDto {
   @ApiProperty()
   title!: string;
 
-  @ApiProperty()
+  @ApiProperty({ example: '2026-05-03T00:00:00.000Z', description: 'Task day, midnight UTC (ISO 8601)' })
   date!: string;
 
   @ApiProperty({ nullable: true })

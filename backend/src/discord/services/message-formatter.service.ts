@@ -1,5 +1,6 @@
 import { Injectable } from "@nestjs/common";
 import { ChannelFormat, Task } from "@prisma/client";
+import { utcNowIsoString } from "../../common/utc-datetime";
 
 export interface FormattedMessage {
   content?: string;
@@ -58,7 +59,7 @@ export class MessageFormatterService {
             footer: {
               text: `${tasks.length} task${tasks.length === 1 ? "" : "s"} planned`,
             },
-            timestamp: new Date().toISOString(),
+            timestamp: utcNowIsoString(),
           },
         ],
       };
@@ -97,7 +98,7 @@ export class MessageFormatterService {
               lines.length > 0 ? lines.join("\n") : "_No tasks completed yet._",
             color: 0x1d9e75,
             footer: { text: `${doneTasks.length} completed` },
-            timestamp: new Date().toISOString(),
+            timestamp: utcNowIsoString(),
           },
         ],
       };
@@ -133,7 +134,7 @@ export class MessageFormatterService {
           footer: {
             text: `${done.length} of ${done.length + missed.length} done · ${pct}%`,
           },
-          timestamp: new Date().toISOString(),
+          timestamp: utcNowIsoString(),
         },
       ],
     };

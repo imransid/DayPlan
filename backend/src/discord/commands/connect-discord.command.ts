@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { CommandHandler, ICommand, ICommandHandler } from '@nestjs/cqrs';
+import { DateTime } from 'luxon';
 import { PrismaService } from '../../prisma/prisma.service';
 import { DiscordApiService } from '../services/discord-api.service';
 import { CryptoService } from '../services/crypto.service';
@@ -36,7 +37,9 @@ export class ConnectDiscordHandler
         guildName: tokens.guild.name,
         accessToken: this.crypto.encrypt(tokens.access_token),
         refreshToken: tokens.refresh_token ? this.crypto.encrypt(tokens.refresh_token) : null,
-        tokenExpiresAt: new Date(Date.now() + tokens.expires_in * 1000),
+        tokenExpiresAt: DateTime.utc()
+          .plus({ seconds: tokens.expires_in })
+          .toJSDate(),
       },
       create: {
         userId: cmd.userId,
@@ -44,7 +47,9 @@ export class ConnectDiscordHandler
         guildName: tokens.guild.name,
         accessToken: this.crypto.encrypt(tokens.access_token),
         refreshToken: tokens.refresh_token ? this.crypto.encrypt(tokens.refresh_token) : null,
-        tokenExpiresAt: new Date(Date.now() + tokens.expires_in * 1000),
+        tokenExpiresAt: DateTime.utc()
+          .plus({ seconds: tokens.expires_in })
+          .toJSDate(),
       },
     });
 

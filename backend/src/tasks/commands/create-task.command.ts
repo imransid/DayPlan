@@ -1,7 +1,9 @@
 import { Injectable } from '@nestjs/common';
 import { CommandHandler, ICommand, ICommandHandler } from '@nestjs/cqrs';
+import { parseTaskDateFromApi, utcTodayStartForDb } from '../../common/utc-datetime';
 import { PrismaService } from '../../prisma/prisma.service';
 import { TaskResponseDto } from '../dto/task.dto';
+import { toTaskResponseDto } from '../task-response.mapper';
 
 export class CreateTaskCommand implements ICommand {
   constructor(
@@ -18,8 +20,7 @@ export class CreateTaskHandler implements ICommandHandler<CreateTaskCommand, Tas
   constructor(private readonly prisma: PrismaService) {}
 
   async execute(cmd: CreateTaskCommand): Promise<TaskResponseDto> {
-    const date = cmd.date ? new Date(cmd.date) : new Date();
-    date.setUTCHours(0, 0, 0, 0);
+    const date = cmd.date ? parseTaskDateFromApi(cmd.date) : utcTodayStartForDb();
 
     const position =
       cmd.position ??
@@ -36,12 +37,6 @@ export class CreateTaskHandler implements ICommandHandler<CreateTaskCommand, Tas
       },
     });
 
-    return {
-      id: task.id,
-      title: task.title,
-      date: task.date.toISOString().split('T')[0],
-      doneAt: task.doneAt?.toISOString() ?? null,
-      position: task.position,
-    };
+    return toTaskResponseDto(task);
   }
 }

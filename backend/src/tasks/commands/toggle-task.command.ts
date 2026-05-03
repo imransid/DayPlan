@@ -1,7 +1,9 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { CommandHandler, ICommand, ICommandHandler } from '@nestjs/cqrs';
+import { utcNowJsDate } from '../../common/utc-datetime';
 import { PrismaService } from '../../prisma/prisma.service';
 import { TaskResponseDto } from '../dto/task.dto';
+import { toTaskResponseDto } from '../task-response.mapper';
 
 export class ToggleTaskCommand implements ICommand {
   constructor(
@@ -25,15 +27,9 @@ export class ToggleTaskHandler implements ICommandHandler<ToggleTaskCommand, Tas
 
     const task = await this.prisma.task.update({
       where: { id: cmd.taskId },
-      data: { doneAt: existing.doneAt ? null : new Date() },
+      data: { doneAt: existing.doneAt ? null : utcNowJsDate() },
     });
 
-    return {
-      id: task.id,
-      title: task.title,
-      date: task.date.toISOString().split('T')[0],
-      doneAt: task.doneAt?.toISOString() ?? null,
-      position: task.position,
-    };
+    return toTaskResponseDto(task);
   }
 }
