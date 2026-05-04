@@ -42,7 +42,7 @@ export function IntegrationsScreen({ navigation }: Props) {
     }
   };
 
-  const discord = connections[0];
+  const hasConnections = connections.length > 0;
 
   return (
     <SafeAreaView style={styles.safe}>
@@ -56,45 +56,51 @@ export function IntegrationsScreen({ navigation }: Props) {
         ) : (
           <>
             <Text style={styles.sectionLabel}>CONNECTED</Text>
-            {discord ? (
-              <Pressable
-                onPress={() =>
-                  navigation.navigate('ChannelManager', {
-                    guildId: discord.guildId,
-                    guildName: discord.guildName,
-                  })
-                }
-                style={[styles.card, styles.cardConnected]}
-              >
-                <View style={[styles.icon, { backgroundColor: colors.discord }]}>
-                  <Text style={styles.iconText}>D</Text>
-                </View>
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.cardName}>Discord</Text>
-                  <Text style={styles.cardSub}>
-                    {discord.guildName} · {discord.channels.length} channel
-                    {discord.channels.length === 1 ? '' : 's'}
-                  </Text>
-                </View>
-                <Text style={styles.chevron}>›</Text>
-              </Pressable>
+            {hasConnections ? (
+              connections.map((conn) => (
+                <Pressable
+                  key={conn.id}
+                  onPress={() =>
+                    navigation.navigate('ChannelManager', {
+                      guildId: conn.guildId,
+                      guildName: conn.guildName,
+                    })
+                  }
+                  style={[styles.card, styles.cardConnected]}
+                >
+                  <View style={[styles.icon, { backgroundColor: colors.discord }]}>
+                    <Text style={styles.iconText}>D</Text>
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.cardName}>{conn.guildName}</Text>
+                    <Text style={styles.cardSub}>
+                      Discord · {conn.channels.length} channel
+                      {conn.channels.length === 1 ? '' : 's'}
+                      {conn.channels.length > 0
+                        ? ` · ${conn.channels.map((c) => `#${c.channelName}`).join(', ')}`
+                        : ''}
+                    </Text>
+                  </View>
+                  <Text style={styles.chevron}>›</Text>
+                </Pressable>
+              ))
             ) : (
               <Text style={styles.noneText}>No services connected yet.</Text>
             )}
 
             <Text style={[styles.sectionLabel, { marginTop: 24 }]}>AVAILABLE</Text>
-            {!discord && (
-              <Pressable onPress={handleConnectDiscord} style={styles.card}>
-                <View style={[styles.icon, { backgroundColor: colors.discord }]}>
-                  <Text style={styles.iconText}>D</Text>
-                </View>
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.cardName}>Discord</Text>
-                  <Text style={styles.cardSub}>Multi-channel posting</Text>
-                </View>
-                <Text style={styles.addText}>+ Add</Text>
-              </Pressable>
-            )}
+            <Pressable onPress={handleConnectDiscord} style={styles.card}>
+              <View style={[styles.icon, { backgroundColor: colors.discord }]}>
+                <Text style={styles.iconText}>D</Text>
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.cardName}>
+                  {hasConnections ? 'Add another Discord server' : 'Discord'}
+                </Text>
+                <Text style={styles.cardSub}>Multi-channel posting</Text>
+              </View>
+              <Text style={styles.addText}>+ Add</Text>
+            </Pressable>
             <View style={styles.card}>
               <View style={[styles.icon, { backgroundColor: colors.slack }]}>
                 <Text style={styles.iconText}>S</Text>
