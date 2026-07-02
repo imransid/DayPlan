@@ -60,7 +60,9 @@ export function ChannelManagerScreen({ route, navigation }: Props) {
     });
   };
 
-  if (isLoading) {
+  // Only block on the very first load with no cached connection; otherwise
+  // render the (cached) channels immediately while any refetch runs in the bg.
+  if (isLoading && !conn) {
     return (
       <SafeAreaView style={styles.safe}>
         <ActivityIndicator color={colors.textMuted} style={{ marginTop: 40 }} />

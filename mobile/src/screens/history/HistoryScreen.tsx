@@ -25,7 +25,7 @@ export function HistoryScreen() {
           <Heading subtitle="Last 30 days">History</Heading>
         </Animated.View>
 
-        {isLoading ? (
+        {isLoading && dates.length === 0 ? (
           <ActivityIndicator color={colors.textMuted} style={{ marginTop: 40 }} />
         ) : dates.length === 0 ? (
           <Animated.Text

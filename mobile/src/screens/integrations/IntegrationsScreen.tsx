@@ -83,7 +83,7 @@ export function IntegrationsScreen({ navigation }: Props) {
           <Text style={styles.backText}>Integrations</Text>
         </Pressable>
 
-        {isLoading ? (
+        {isLoading && connections.length === 0 ? (
           <ActivityIndicator color={colors.textMuted} style={{ marginTop: 40 }} />
         ) : (
           <>

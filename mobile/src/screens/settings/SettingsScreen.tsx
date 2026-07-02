@@ -86,18 +86,21 @@ export function SettingsScreen({ navigation }: Props) {
     ]);
   };
 
-  const handleSaveTime = async (
+  const handleSaveTime = (
     field: 'goalPostTime' | 'workUpdateTime',
     next: string,
   ) => {
-    try {
-      await updateProfile({ [field]: next }).unwrap();
-    } catch (err: any) {
-      Alert.alert(
-        'Could not save time',
-        err?.data?.message ?? err?.message ?? 'Try again',
-      );
-    }
+    // Fire-and-forget: the optimistic updateProfile patch updates the displayed
+    // time instantly (from the getMe cache); the network settles in the
+    // background and only surfaces on failure.
+    updateProfile({ [field]: next })
+      .unwrap()
+      .catch((err: any) => {
+        Alert.alert(
+          'Could not save time',
+          err?.data?.message ?? err?.message ?? 'Try again',
+        );
+      });
   };
 
   /**
