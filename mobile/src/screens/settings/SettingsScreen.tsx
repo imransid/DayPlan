@@ -155,7 +155,9 @@ export function SettingsScreen({ navigation }: Props) {
       if (result.posted === 0 && result.failed === 0) {
         Alert.alert(
           'Nothing posted',
-          'No eligible Discord channels found. Connect a server and pick channels under Integrations, and make sure the channel has the right post type enabled.',
+          kind === 'work_update'
+            ? 'Nothing to post yet — complete a task first, and make sure you’ve joined a team channel (or connected Discord) that receives work updates.'
+            : 'No destination for this post. Join a team channel under Integrations (enter your admin’s code), or connect Discord and pick channels.',
         );
         return;
       }
