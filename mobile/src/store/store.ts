@@ -15,7 +15,7 @@ import { setupListeners } from '@reduxjs/toolkit/query';
 import authReducer from './slices/authSlice';
 import notesReducer from './slices/notesSlice';
 import { api } from './api/api';
-import { setupRnFocusListeners } from './rtkAppStateFocus';
+import { rnFocusHandler } from './rtkAppStateFocus';
 
 const rootReducer = combineReducers({
   auth: authReducer,
@@ -45,10 +45,10 @@ export const store = configureStore({
 
 export const persistor = persistStore(store);
 
-setupListeners(store.dispatch);
-// React Native focus adapter so refetchOnFocus actually fires (setupListeners
-// alone is a no-op in RN — see rtkAppStateFocus.ts).
-setupRnFocusListeners(store.dispatch);
+// Pass the RN AppState handler as setupListeners' custom callback — it receives
+// the real onFocus/onFocusLost action creators (see rtkAppStateFocus.ts). This
+// is what makes refetchOnFocus work in React Native without crashing.
+setupListeners(store.dispatch, rnFocusHandler);
 
 export type RootState = ReturnType<typeof store.getState>;
 export type AppDispatch = typeof store.dispatch;

@@ -1,24 +1,33 @@
 import { AppState, type AppStateStatus } from 'react-native';
-import { onFocus, onFocusLost } from '@reduxjs/toolkit/query';
-import type { AppDispatch } from './store';
 
 /**
- * RTK Query's `refetchOnFocus` relies on browser `window.focus`/`blur` events,
- * which don't exist in React Native — so `setupListeners(dispatch)` alone is a
- * no-op here. This adapter maps React Native's `AppState` (foreground/background)
- * to RTK Query's `onFocus`/`onFocusLost` actions, so active queries silently
- * refetch when the user returns to the app.
+ * Custom `setupListeners` handler for React Native.
+ *
+ * RTK Query's focus/online action creators (onFocus/onFocusLost/…) are NOT
+ * importable from '@reduxjs/toolkit/query' — they resolve to `undefined`, so
+ * dispatching them crashes the app on every foreground/background change.
+ * Instead, `setupListeners(dispatch, handler)` passes the action creators into
+ * this handler. We map React Native's AppState (which has no window focus/blur
+ * event) to onFocus/onFocusLost so `refetchOnFocus` works.
+ *
+ * Signature intentionally matches setupListeners' 2nd argument.
  */
-export function setupRnFocusListeners(dispatch: AppDispatch): () => void {
-  let prev: AppStateStatus = AppState.currentState;
-  const sub = AppState.addEventListener('change', (next: AppStateStatus) => {
-    const wasBackground = prev === 'inactive' || prev === 'background';
-    if (wasBackground && next === 'active') {
-      dispatch(onFocus());
-    } else if (next === 'inactive' || next === 'background') {
-      dispatch(onFocusLost());
+export function rnFocusHandler(
+  dispatch: (action: unknown) => unknown,
+  actions: {
+    onFocus: () => unknown;
+    onFocusLost: () => unknown;
+    onOnline: () => unknown;
+    onOffline: () => unknown;
+  },
+): () => void {
+  const handler = (status: AppStateStatus) => {
+    if (status === 'active') {
+      dispatch(actions.onFocus());
+    } else if (status === 'background' || status === 'inactive') {
+      dispatch(actions.onFocusLost());
     }
-    prev = next;
-  });
+  };
+  const sub = AppState.addEventListener('change', handler);
   return () => sub.remove();
 }
