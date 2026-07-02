@@ -17,6 +17,8 @@ export type MainStackParamList = {
   Integrations: undefined;
   ChannelManager: { guildId: string; guildName: string };
   ChannelPicker: { guildId: string; guildName: string };
+  // Enter a code to join a shared team channel (member flow).
+  JoinTeamChannel: undefined;
   // Note editor — create (no params) or edit (noteId). Full pushed screen so
   // the body + inline media get the whole viewport.
   NoteEditor: { noteId?: string } | undefined;

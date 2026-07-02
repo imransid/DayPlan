@@ -48,6 +48,39 @@ export interface ReminderSchedule {
   endOfDayEnabled: boolean;
 }
 
+// ─── Team / shared channels ────────────────────────────────────────────────
+export interface OwnedSharedChannel {
+  id: string;
+  channelId: string;
+  channelName: string;
+  joinCode: string; // owner-only
+  enabled: boolean;
+  postGoals: boolean;
+  postUpdates: boolean;
+  memberCount: number;
+  lastError: string | null;
+}
+
+export interface JoinedSharedChannel {
+  id: string;
+  channelName: string;
+  enabled: boolean;
+}
+
+export interface MySharedChannels {
+  owned: OwnedSharedChannel[];
+  joined: JoinedSharedChannel[];
+}
+
+export interface SharedChannelSummary {
+  id: string;
+  channelName: string;
+  joinCode: string;
+  enabled: boolean;
+  postGoals: boolean;
+  postUpdates: boolean;
+}
+
 // ─── Notes ────────────────────────────────────────────────────────────────
 // Local-first notes with an optional single file attachment. Stored on-device
 // via redux-persist; the attached file's bytes live in the app sandbox and are

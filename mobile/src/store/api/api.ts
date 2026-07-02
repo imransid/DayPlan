@@ -17,6 +17,8 @@ import type {
   DiscordConnection,
   ChannelFormat,
   ReminderSchedule,
+  MySharedChannels,
+  SharedChannelSummary,
 } from "../../types";
 
 const baseQuery = fetchBaseQuery({
@@ -58,7 +60,13 @@ export interface TestPublishResponse {
 
 export const api = createApi({
   baseQuery: baseQueryWithAuth,
-  tagTypes: ["Tasks", "User", "DiscordConnections", "DiscordChannels"],
+  tagTypes: [
+    "Tasks",
+    "User",
+    "DiscordConnections",
+    "DiscordChannels",
+    "SharedChannels",
+  ],
   endpoints: (builder) => ({
     // ─── Auth ────────────────────────────────────────────
     signUp: builder.mutation<
@@ -201,6 +209,62 @@ export const api = createApi({
         body,
       }),
     }),
+
+    // ─── Team / shared channels ──────────────────────────
+    getSharedChannels: builder.query<MySharedChannels, void>({
+      query: () => "/discord/shared-channels",
+      providesTags: ["SharedChannels"],
+    }),
+    createSharedChannel: builder.mutation<
+      SharedChannelSummary,
+      { guildId: string; channelId: string }
+    >({
+      query: (body) => ({
+        url: "/discord/shared-channels",
+        method: "POST",
+        body,
+      }),
+      invalidatesTags: ["SharedChannels"],
+    }),
+    updateSharedChannel: builder.mutation<
+      SharedChannelSummary,
+      { id: string; enabled?: boolean; postGoals?: boolean; postUpdates?: boolean }
+    >({
+      query: ({ id, ...body }) => ({
+        url: `/discord/shared-channels/${id}`,
+        method: "PATCH",
+        body,
+      }),
+      invalidatesTags: ["SharedChannels"],
+    }),
+    rotateSharedChannelCode: builder.mutation<
+      { id: string; joinCode: string },
+      string
+    >({
+      query: (id) => ({
+        url: `/discord/shared-channels/${id}/rotate-code`,
+        method: "POST",
+      }),
+      invalidatesTags: ["SharedChannels"],
+    }),
+    joinSharedChannel: builder.mutation<
+      { sharedChannelId: string; channelName: string },
+      { joinCode: string }
+    >({
+      query: (body) => ({
+        url: "/discord/shared-channels/join",
+        method: "POST",
+        body,
+      }),
+      invalidatesTags: ["SharedChannels"],
+    }),
+    leaveSharedChannel: builder.mutation<{ ok: true }, string>({
+      query: (id) => ({
+        url: `/discord/shared-channels/${id}/leave`,
+        method: "DELETE",
+      }),
+      invalidatesTags: ["SharedChannels"],
+    }),
   }),
 });
 
@@ -222,4 +286,10 @@ export const {
   useListAvailableChannelsQuery,
   useSaveChannelsMutation,
   useTestPublishMutation,
+  useGetSharedChannelsQuery,
+  useCreateSharedChannelMutation,
+  useUpdateSharedChannelMutation,
+  useRotateSharedChannelCodeMutation,
+  useJoinSharedChannelMutation,
+  useLeaveSharedChannelMutation,
 } = api;

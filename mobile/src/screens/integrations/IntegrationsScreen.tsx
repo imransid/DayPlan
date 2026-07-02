@@ -17,14 +17,30 @@ import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { PressScale } from '../../components/UI';
 import { ChevronRightIcon, ChevronLeftIcon } from '../../components/Icon';
 import { colors, spacing, radius, motion, elevation } from '../../theme';
-import { useGetConnectionsQuery, useLazyGetDiscordAuthUrlQuery } from '../../store/api/api';
+import {
+  useGetConnectionsQuery,
+  useLazyGetDiscordAuthUrlQuery,
+  useGetSharedChannelsQuery,
+  useLeaveSharedChannelMutation,
+} from '../../store/api/api';
 import type { MainStackParamList } from '../../navigation/types';
 
 type Props = NativeStackScreenProps<MainStackParamList, 'Integrations'>;
 
 export function IntegrationsScreen({ navigation }: Props) {
   const { data: connections = [], isLoading, refetch } = useGetConnectionsQuery();
+  const { data: shared } = useGetSharedChannelsQuery();
+  const [leaveShared] = useLeaveSharedChannelMutation();
   const [getAuthUrl] = useLazyGetDiscordAuthUrlQuery();
+
+  const joinedTeams = shared?.joined ?? [];
+
+  const confirmLeave = (id: string, name: string) => {
+    Alert.alert('Leave team channel?', `Stop posting your plan to “${name}”.`, [
+      { text: 'Cancel', style: 'cancel' },
+      { text: 'Leave', style: 'destructive', onPress: () => leaveShared(id) },
+    ]);
+  };
 
   const handleConnectDiscord = async () => {
     try {
@@ -108,14 +124,56 @@ export function IntegrationsScreen({ navigation }: Props) {
               </Animated.Text>
             )}
 
+            {/* ─── Team channels the user has joined ─── */}
             <Animated.Text
               entering={stagger(connections.length + 2)}
+              style={[styles.sectionLabel, { marginTop: 28 }]}
+            >
+              TEAM CHANNELS
+            </Animated.Text>
+
+            {joinedTeams.map((team, idx) => (
+              <Animated.View key={team.id} entering={stagger(connections.length + 3 + idx)}>
+                <View style={[styles.card, styles.cardConnected]}>
+                  <View style={[styles.icon, { backgroundColor: colors.accent }]}>
+                    <Text style={styles.iconText}>#</Text>
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.cardName}># {team.channelName}</Text>
+                    <Text style={styles.cardSub}>Team feed · posting your plan</Text>
+                  </View>
+                  <Pressable onPress={() => confirmLeave(team.id, team.channelName)} hitSlop={8}>
+                    <Text style={styles.leaveText}>Leave</Text>
+                  </Pressable>
+                </View>
+              </Animated.View>
+            ))}
+
+            <Animated.View entering={stagger(connections.length + 3 + joinedTeams.length)}>
+              <PressScale
+                onPress={() => navigation.navigate('JoinTeamChannel')}
+                scaleTo={0.98}
+                style={styles.card}
+              >
+                <View style={[styles.icon, { backgroundColor: colors.accentSoft }]}>
+                  <Text style={[styles.iconText, { color: colors.accent }]}>+</Text>
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.cardName}>Join a team channel</Text>
+                  <Text style={styles.cardSub}>Enter a code from your admin</Text>
+                </View>
+                <ChevronRightIcon size={18} color={colors.textMuted} />
+              </PressScale>
+            </Animated.View>
+
+            <Animated.Text
+              entering={stagger(connections.length + 5 + joinedTeams.length)}
               style={[styles.sectionLabel, { marginTop: 28 }]}
             >
               AVAILABLE
             </Animated.Text>
 
-            <Animated.View entering={stagger(connections.length + 3)}>
+            <Animated.View entering={stagger(connections.length + 6 + joinedTeams.length)}>
               <PressScale onPress={handleConnectDiscord} scaleTo={0.98} style={styles.card}>
                 <View style={[styles.icon, { backgroundColor: colors.discord }]}>
                   <Text style={styles.iconText}>D</Text>
@@ -130,7 +188,7 @@ export function IntegrationsScreen({ navigation }: Props) {
               </PressScale>
             </Animated.View>
 
-            <Animated.View entering={stagger(connections.length + 4)}>
+            <Animated.View entering={stagger(connections.length + 7 + joinedTeams.length)}>
               <View style={styles.card}>
                 <View style={[styles.icon, { backgroundColor: colors.slack, opacity: 0.6 }]}>
                   <Text style={styles.iconText}>S</Text>
@@ -190,5 +248,6 @@ const styles = StyleSheet.create({
   cardName: { fontSize: 15, fontWeight: '600', color: colors.textPrimary, letterSpacing: -0.1 },
   cardSub: { fontSize: 12, color: colors.textMuted, marginTop: 2 },
   addText: { fontSize: 13, color: colors.accent, fontWeight: '700' },
+  leaveText: { fontSize: 13, color: colors.danger, fontWeight: '700' },
   noneText: { color: colors.textMuted, fontSize: 14, marginVertical: 8 },
 });
