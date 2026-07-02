@@ -65,3 +65,8 @@ web-build/
 **/ios/build/
 *.xcuserstate
 DerivedData/
+
+# Release/upload keystores (never commit; back up separately)
+upload.keystore
+dayplan-upload.keystore
+*-upload.keystore

@@ -10,6 +10,7 @@ import { RootNavigator } from './src/navigation/RootNavigator';
 import { colors } from './src/theme';
 import { LiquidGlassBackground } from './src/components/LiquidGlassBackground';
 import { registerAlarmActionHandler } from './src/services/notifications';
+import { checkForUpdate } from './src/services/appUpdate';
 
 function Loading() {
   return (
@@ -27,6 +28,13 @@ export default function App() {
   useEffect(() => {
     const unsubscribe = registerAlarmActionHandler();
     return () => unsubscribe();
+  }, []);
+
+  // Silent auto-update check on launch: if CI has published a newer build to
+  // GitHub Releases, offer to download + install it (Android). No-op on iOS and
+  // when already current. Runs in the background — never blocks the UI.
+  useEffect(() => {
+    checkForUpdate({ silent: true }).catch(() => undefined);
   }, []);
 
   return (

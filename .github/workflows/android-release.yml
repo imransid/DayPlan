@@ -1,0 +1,102 @@
+name: Build & release Android APK
+
+# Push -> CI builds a release-signed APK and publishes it to GitHub Releases as
+# `build-<run_number>`. The installed app checks that release on launch and
+# offers a one-tap update (see mobile/src/services/appUpdate.ts) — so you never
+# build or sideload manually again.
+#
+# Triggers: pushes to main, or a manual run from the Actions tab. (Left off
+# feature branches on purpose — the New-Architecture C++ build is slow, ~30-45
+# min, so we don't burn CI minutes on every WIP commit. Dispatch manually to
+# build a branch.)
+on:
+  push:
+    branches: [main]
+    paths: ['mobile/**', '.github/workflows/android-release.yml']
+  workflow_dispatch: {}
+
+permissions:
+  contents: write # needed to create the Release
+
+concurrency:
+  group: android-release
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: mobile
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Enable Corepack (Yarn 4)
+        run: corepack enable
+
+      - name: Install JS dependencies
+        run: yarn install --immutable
+
+      - name: Stamp build number into the JS bundle
+        run: |
+          sed -i "s/export const APP_BUILD = 0;/export const APP_BUILD = ${{ github.run_number }};/" src/appVersion.ts
+          grep APP_BUILD src/appVersion.ts
+
+      - name: Decode release keystore
+        env:
+          KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+        run: |
+          if [ -z "$KEYSTORE_B64" ]; then
+            echo "::error::Missing ANDROID_KEYSTORE_BASE64 secret — see backend/README or the setup notes."
+            exit 1
+          fi
+          echo "$KEYSTORE_B64" | base64 --decode > android/app/upload.keystore
+
+      - name: Gradle cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: gradle-${{ runner.os }}-${{ hashFiles('mobile/android/**/*.gradle*', 'mobile/android/gradle/wrapper/gradle-wrapper.properties') }}
+          restore-keys: gradle-${{ runner.os }}-
+
+      - name: Build release APK
+        working-directory: mobile/android
+        env:
+          DAYPLAN_STORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          DAYPLAN_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          DAYPLAN_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          ./gradlew assembleRelease --no-daemon \
+            -PdayplanVersionCode=${{ github.run_number }} \
+            -PdayplanVersionName=1.0.${{ github.run_number }} \
+            -PDAYPLAN_UPLOAD_STORE_FILE=upload.keystore \
+            -PDAYPLAN_UPLOAD_STORE_PASSWORD="$DAYPLAN_STORE_PASSWORD" \
+            -PDAYPLAN_UPLOAD_KEY_ALIAS="$DAYPLAN_KEY_ALIAS" \
+            -PDAYPLAN_UPLOAD_KEY_PASSWORD="$DAYPLAN_KEY_PASSWORD"
+
+      - name: Rename APK
+        run: cp android/app/build/outputs/apk/release/app-release.apk "dayplan-build-${{ github.run_number }}.apk"
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: build-${{ github.run_number }}
+          name: DayPlan build ${{ github.run_number }}
+          body: |
+            Automated build from ${{ github.sha }}.
+            Installed apps will offer this update on next launch.
+          files: mobile/dayplan-build-${{ github.run_number }}.apk
+          make_latest: true
