@@ -10,7 +10,7 @@ import {
 } from 'react-native';
 
 import { Button } from './UI';
-import { colors, spacing, radius } from '../theme';
+import { colors, spacing, radius, elevation } from '../theme';
 
 interface Props {
   visible: boolean;
@@ -27,11 +27,12 @@ const MINUTES = ['00', '15', '30', '45'];
 const ROW_HEIGHT = 44;
 
 /**
- * Dependency-free time picker. Two side-by-side scrolling columns of values
- * (hours 00-23 and minutes 00/15/30/45). Tap a row to select; Save returns
- * the chosen "HH:mm" string. We picked 15-minute granularity because the
- * scheduler runs once per minute — finer-than-1-minute control would be
- * pointless and finer than 15 makes the picker unwieldy without a wheel.
+ * Dependency-free time picker. Two scrolling columns (hours 00-23, minutes
+ * 00/15/30/45). Tap a row to select; Save returns "HH:mm".
+ *
+ * 15-minute granularity is chosen because the scheduler runs once per
+ * minute — finer than that is pointless, and finer than 15 makes the
+ * picker unwieldy without a wheel control.
  */
 export function TimePickerModal({ visible, value, title, onClose, onSave }: Props) {
   const initial = parseTime(value);
@@ -41,16 +42,14 @@ export function TimePickerModal({ visible, value, title, onClose, onSave }: Prop
   const hoursRef = useRef<ScrollView>(null);
   const minutesRef = useRef<ScrollView>(null);
 
-  // When `value` changes (modal reopened with a new time) reset our local state
-  // and scroll both columns to the selected rows.
   useEffect(() => {
     if (!visible) return;
     const next = parseTime(value);
     setHour(next.hour);
     setMinute(next.minute);
 
-    // Defer scroll until after layout. Without the timeout the ScrollView
-    // hasn't measured yet and the offset is silently ignored.
+    // Defer scroll until after layout — without the timeout the offset
+    // is silently ignored.
     const t = setTimeout(() => {
       const hourIdx = HOURS.indexOf(next.hour);
       const minIdx = MINUTES.indexOf(next.minute);
@@ -104,7 +103,7 @@ export function TimePickerModal({ visible, value, title, onClose, onSave }: Prop
               <Text style={styles.cancelText}>Cancel</Text>
             </Pressable>
             <View style={{ flex: 1 }}>
-              <Button label="Save" onPress={handleSave} />
+              <Button label="Save" variant="accent" onPress={handleSave} />
             </View>
           </View>
         </Pressable>
@@ -139,7 +138,9 @@ const Column = React.forwardRef<
               onPress={() => onSelect(v)}
               style={[styles.colRow, active && styles.colRowActive]}
             >
-              <Text style={[styles.colText, active && styles.colTextActive]}>{v}</Text>
+              <Text style={[styles.colText, active && styles.colTextActive]}>
+                {v}
+              </Text>
             </Pressable>
           );
         })}
@@ -152,40 +153,53 @@ function parseTime(value: string): { hour: string; minute: string } {
   const match = /^(\d{2}):(\d{2})$/.exec(value ?? '');
   if (!match) return { hour: '09', minute: '00' };
   const h = match[1];
-  // Snap minute to the nearest supported step (00/15/30/45). This is just a
-  // display convenience — users can still pick any of the four.
   const m = parseInt(match[2], 10);
+  // Snap minute to nearest supported step (00/15/30/45) for display.
   const snapped =
     m < 8 ? '00' : m < 23 ? '15' : m < 38 ? '30' : m < 53 ? '45' : '00';
   return { hour: h, minute: snapped };
 }
 
 const styles = StyleSheet.create({
-  bg: { flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'flex-end' },
+  bg: {
+    flex: 1,
+    backgroundColor: 'rgba(20, 16, 35, 0.55)',
+    justifyContent: 'flex-end',
+  },
   sheet: {
-    backgroundColor: colors.surface,
-    borderTopLeftRadius: 24,
-    borderTopRightRadius: 24,
+    backgroundColor: colors.surfaceStrong,
+    borderTopLeftRadius: radius.xl,
+    borderTopRightRadius: radius.xl,
     padding: spacing.lg,
     paddingBottom: Platform.OS === 'ios' ? spacing.xl + 12 : spacing.xl,
+    borderTopWidth: 1,
+    borderColor: colors.borderStrong,
+    ...elevation.lg,
   },
   handle: {
-    width: 36,
+    width: 40,
     height: 4,
     backgroundColor: colors.textDisabled,
     borderRadius: 2,
     alignSelf: 'center',
-    marginBottom: 16,
+    marginBottom: 18,
   },
-  title: { fontSize: 18, fontWeight: '500', color: colors.textPrimary, textAlign: 'center' },
-  preview: {
-    fontSize: 32,
-    fontWeight: '300',
+  title: {
+    fontSize: 18,
+    fontWeight: '600',
     color: colors.textPrimary,
     textAlign: 'center',
-    marginTop: 4,
-    marginBottom: 16,
-    letterSpacing: 1,
+    letterSpacing: -0.2,
+  },
+  preview: {
+    fontSize: 36,
+    fontWeight: '300',
+    color: colors.accent,
+    textAlign: 'center',
+    marginTop: 6,
+    marginBottom: 18,
+    letterSpacing: 1.5,
+    fontVariant: ['tabular-nums'],
   },
 
   columns: {
@@ -198,25 +212,41 @@ const styles = StyleSheet.create({
   column: { flex: 1 },
   colLabel: {
     fontSize: 11,
-    fontWeight: '600',
+    fontWeight: '700',
     color: colors.textMuted,
-    letterSpacing: 0.4,
+    letterSpacing: 0.6,
     textAlign: 'center',
-    marginBottom: 6,
+    marginBottom: 8,
   },
   colScroll: {
-    backgroundColor: colors.surfaceAlt,
+    backgroundColor: 'rgba(255, 255, 255, 0.5)',
     borderRadius: radius.md,
     maxHeight: 168,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.7)',
   },
-  colRow: { paddingVertical: 12, alignItems: 'center', height: ROW_HEIGHT, justifyContent: 'center' },
-  colRowActive: { backgroundColor: colors.primary, borderRadius: radius.sm },
-  colText: { fontSize: 16, color: colors.textPrimary },
-  colTextActive: { color: 'white', fontWeight: '600' },
+  colRow: {
+    paddingVertical: 12,
+    alignItems: 'center',
+    height: ROW_HEIGHT,
+    justifyContent: 'center',
+  },
+  colRowActive: {
+    backgroundColor: colors.accent,
+    borderRadius: radius.sm,
+    marginHorizontal: 6,
+  },
+  colText: { fontSize: 16, color: colors.textPrimary, fontWeight: '500' },
+  colTextActive: { color: 'white', fontWeight: '700' },
   colon: { paddingHorizontal: 4, paddingTop: 24 },
-  colonText: { fontSize: 22, color: colors.textMuted },
+  colonText: { fontSize: 22, color: colors.textMuted, fontWeight: '300' },
 
-  actions: { flexDirection: 'row', gap: 12, marginTop: 20, alignItems: 'center' },
+  actions: {
+    flexDirection: 'row',
+    gap: 12,
+    marginTop: 22,
+    alignItems: 'center',
+  },
   cancelBtn: { paddingVertical: 12, paddingHorizontal: 16 },
-  cancelText: { color: colors.textMuted, fontSize: 14 },
+  cancelText: { color: colors.textMuted, fontSize: 14, fontWeight: '500' },
 });

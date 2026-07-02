@@ -40,6 +40,22 @@ const baseQueryWithAuth: BaseQueryFn<
   return result;
 };
 
+export interface RolloverResponse {
+  copied: number;
+  skipped: number;
+  tasks: Task[];
+}
+
+export interface TestPublishResponse {
+  posted: number;
+  failed: number;
+  results: Array<{
+    channelName: string;
+    status: "success" | "failed";
+    error?: string;
+  }>;
+}
+
 export const api = createApi({
   baseQuery: baseQueryWithAuth,
   tagTypes: ["Tasks", "User", "DiscordConnections", "DiscordChannels"],
@@ -66,7 +82,6 @@ export const api = createApi({
       query: () => "/users/me",
       providesTags: ["User"],
     }),
-    // Profile patch now accepts goalPostTime and workUpdateTime in addition to legacy fields.
     updateProfile: builder.mutation<User, Partial<User>>({
       query: (body) => ({ url: "/users/me", method: "PATCH", body }),
       invalidatesTags: ["User"],
@@ -92,6 +107,15 @@ export const api = createApi({
     }),
     createTask: builder.mutation<Task, { title: string; date?: string }>({
       query: (body) => ({ url: "/tasks", method: "POST", body }),
+      invalidatesTags: ["Tasks"],
+    }),
+    /**
+     * Idempotent: copies yesterday's incomplete tasks into today. The mobile
+     * app calls this whenever the local calendar day rolls over (cold start
+     * after midnight, or app coming back to foreground past midnight).
+     */
+    rolloverTasks: builder.mutation<RolloverResponse, void>({
+      query: () => ({ url: "/tasks/rollover", method: "POST" }),
       invalidatesTags: ["Tasks"],
     }),
     toggleTask: builder.mutation<Task, string>({
@@ -155,7 +179,6 @@ export const api = createApi({
           channelName: string;
           enabled?: boolean;
           format?: ChannelFormat;
-          // New per-channel routing flags
           postGoals?: boolean;
           postUpdates?: boolean;
         }>;
@@ -163,6 +186,20 @@ export const api = createApi({
     >({
       query: (body) => ({ url: "/discord/channels", method: "POST", body }),
       invalidatesTags: ["DiscordConnections"],
+    }),
+    /**
+     * Manual "publish now" — useful for verifying Discord delivery from the
+     * Settings screen without waiting for the scheduler to fire.
+     */
+    testPublish: builder.mutation<
+      TestPublishResponse,
+      { kind: "goal" | "work_update" }
+    >({
+      query: (body) => ({
+        url: "/discord/test-publish",
+        method: "POST",
+        body,
+      }),
     }),
   }),
 });
@@ -176,6 +213,7 @@ export const {
   useGetTasksQuery,
   useGetTaskHistoryQuery,
   useCreateTaskMutation,
+  useRolloverTasksMutation,
   useToggleTaskMutation,
   useUpdateTaskMutation,
   useDeleteTaskMutation,
@@ -183,4 +221,5 @@ export const {
   useGetConnectionsQuery,
   useListAvailableChannelsQuery,
   useSaveChannelsMutation,
+  useTestPublishMutation,
 } = api;

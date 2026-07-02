@@ -1,78 +1,140 @@
-import React, { useState, useEffect } from 'react';
+import React, {
+  useEffect,
+  useRef,
+  useCallback,
+  useMemo,
+} from 'react';
 import {
   View,
   Text,
   StyleSheet,
   Pressable,
-  Modal,
-  TextInput,
-  KeyboardAvoidingView,
-  Platform,
-  FlatList,
+  AppState,
+  AppStateStatus,
   RefreshControl,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-
-import { Button } from '../../components/UI';
-import { colors, spacing, radius } from '../../theme';
-import {
-  useGetTasksQuery,
-  useCreateTaskMutation,
-  useToggleTaskMutation,
-  useDeleteTaskMutation,
-} from '../../store/api/api';
-import { scheduleHourlyReminders, requestPermissions } from '../../services/notifications';
-import { utcTaskDayStartIso } from '../../utils/utcTaskDay';
-import type { Task } from '../../types';
+import { useFocusEffect, useNavigation } from '@react-navigation/native';
+import { NativeStackNavigationProp } from '@react-navigation/native-stack';
+import Animated, {
+  FadeIn,
+  FadeInDown,
+  FadeOut,
+  LinearTransition,
+} from 'react-native-reanimated';
 import { DateTime } from 'luxon';
 
+import { AnimatedTaskRow } from '../../components/AnimatedTaskRow';
+import { AnimatedFab } from '../../components/AnimatedFab';
+import { AnimatedProgressBar, AnimatedNumber } from '../../components/AnimatedProgress';
+import { colors, spacing, radius, motion, elevation } from '../../theme';
+import {
+  useGetTasksQuery,
+  useToggleTaskMutation,
+  useDeleteTaskMutation,
+  useRolloverTasksMutation,
+} from '../../store/api/api';
+import { syncHourlyAlarms } from '../../services/notifications';
+import { utcTaskDayStartIso, localCalendarDateKey } from '../../utils/utcTaskDay';
+import type { MainStackParamList } from '../../navigation/types';
+
+type Nav = NativeStackNavigationProp<MainStackParamList>;
+
 export function HomeScreen() {
+  const navigation = useNavigation<Nav>();
   const today = utcTaskDayStartIso();
+
   const { data: tasks = [], isLoading, refetch } = useGetTasksQuery(today);
-  const [createTask, { isLoading: creating }] = useCreateTaskMutation();
   const [toggleTask] = useToggleTaskMutation();
   const [deleteTask] = useDeleteTaskMutation();
+  const [rolloverTasks] = useRolloverTasksMutation();
 
-  const [modalOpen, setModalOpen] = useState(false);
-  const [draft, setDraft] = useState('');
+  // Open the add-task sheet. AddTaskScreen owns its own createTask
+  // mutation; RTK Query invalidates the "Tasks" tag on success and our
+  // useGetTasksQuery here refetches automatically — no callback or
+  // event bus required.
+  const openAddTask = useCallback(() => {
+    navigation.navigate('AddTask', { date: today });
+  }, [navigation, today]);
+
+  // ── Day-rollover detection ──────────────────────────────────────────
+  const lastSeenLocalDay = useRef<string>(localCalendarDateKey());
+  const rolloverInFlight = useRef(false);
+
+  const checkDayRollover = useCallback(async () => {
+    const currentDay = localCalendarDateKey();
+    if (currentDay === lastSeenLocalDay.current) return;
+    if (rolloverInFlight.current) return;
+
+    rolloverInFlight.current = true;
+    try {
+      await rolloverTasks().unwrap().catch(() => undefined);
+      lastSeenLocalDay.current = currentDay;
+      refetch();
+    } finally {
+      rolloverInFlight.current = false;
+    }
+  }, [rolloverTasks, refetch]);
 
   useEffect(() => {
-    const pending = tasks.filter((t) => !t.doneAt).length;
-    if (pending > 0) {
-      requestPermissions().then((granted) => {
-        if (granted) scheduleHourlyReminders(9, 21, pending);
-      });
-    }
+    (async () => {
+      rolloverInFlight.current = true;
+      try {
+        await rolloverTasks().unwrap().catch(() => undefined);
+        refetch();
+      } finally {
+        rolloverInFlight.current = false;
+      }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useFocusEffect(useCallback(() => { checkDayRollover(); }, [checkDayRollover]));
+
+  useEffect(() => {
+    const sub = AppState.addEventListener('change', (state: AppStateStatus) => {
+      if (state === 'active') checkDayRollover();
+    });
+    return () => sub.remove();
+  }, [checkDayRollover]);
+
+  // ── Derived task stats — memoized so they aren't recomputed on every
+  //    re-render that doesn't actually change `tasks`. ─────────────────
+  const { done, pendingCount, pct } = useMemo(() => {
+    const doneList = tasks.filter((t) => t.doneAt);
+    const pending = tasks.length - doneList.length;
+    const percent =
+      tasks.length > 0 ? Math.round((doneList.length / tasks.length) * 100) : 0;
+    return { done: doneList, pendingCount: pending, pct: percent };
   }, [tasks]);
 
-  const done = tasks.filter((t) => t.doneAt);
-  const pct = tasks.length > 0 ? Math.round((done.length / tasks.length) * 100) : 0;
-
-  const handleAdd = async () => {
-    const title = draft.trim();
-    if (!title) return;
-    setDraft('');
-    setModalOpen(false);
-    await createTask({ title, date: today });
-  };
+  // ── Hourly alarm reconciliation ─────────────────────────────────────
+  // syncHourlyAlarms reads the user's alarm config and decides whether to
+  // (re)schedule or cancel. Called whenever pendingCount changes, so:
+  //   - Completing a task → body text updates from "5 tasks remaining"
+  //     to "4 tasks remaining" for all future hours today.
+  //   - Pending hits zero → all alarms cancelled (nothing to remind about).
+  //   - User toggled the feature off in Settings → cancel takes effect on
+  //     the next change here, and Settings already cancelled directly.
+  // Permission is handled at the Settings toggle, not here, so this can
+  // run silently in the background without surfacing a permission prompt.
+  useEffect(() => {
+    syncHourlyAlarms(pendingCount).catch(() => undefined);
+  }, [pendingCount]);
 
   const formatDate = () =>
-    DateTime.utc().toLocaleString({
+    DateTime.local().toLocaleString({
       weekday: 'long',
       month: 'long',
       day: 'numeric',
     });
 
+  const isEmpty = !isLoading && tasks.length === 0;
+
   return (
-    <SafeAreaView style={styles.safe}>
-      <FlatList
-        data={tasks}
-        keyExtractor={(t) => t.id}
-        extraData={tasks}
-        // Android Fabric + native-stack: default removeClippedSubviews causes ViewGroup
-        // child-count desync on navigation/unmount ("Cannot remove child at index …").
-        removeClippedSubviews={false}
-        contentContainerStyle={{ padding: spacing.lg, paddingBottom: 100 }}
+    <SafeAreaView style={styles.safe} edges={['top']}>
+      <Animated.ScrollView
+        contentContainerStyle={{ padding: spacing.lg, paddingBottom: 120 }}
         refreshControl={
           <RefreshControl
             refreshing={isLoading}
@@ -80,214 +142,217 @@ export function HomeScreen() {
             tintColor={colors.textMuted}
           />
         }
-        ListHeaderComponent={
-          <View style={styles.header}>
-            <View style={styles.row}>
-              <View>
-                <Text style={styles.day}>Today</Text>
-                <Text style={styles.date}>{formatDate()}</Text>
-              </View>
-              {tasks.length > 0 && (
-                <Text style={styles.progress}>
-                  {done.length} of {tasks.length}
-                </Text>
-              )}
+        showsVerticalScrollIndicator={false}
+      >
+        {/* ── Header ───────────────────────────────────────────── */}
+        <Animated.View
+          entering={FadeInDown.duration(motion.base).easing(motion.easeOut)}
+          style={styles.header}
+        >
+          <View style={styles.headerRow}>
+            <View>
+              <Text style={styles.day}>Today</Text>
+              <Text style={styles.date}>{formatDate()}</Text>
             </View>
+
             {tasks.length > 0 && (
-              <View style={styles.pbar}>
-                <View style={[styles.pfill, { width: `${pct}%` }]} />
+              <View style={styles.statBubble}>
+                <AnimatedNumber value={done.length} style={styles.statNumber} />
+                <Text style={styles.statSep}>/</Text>
+                <AnimatedNumber value={tasks.length} style={styles.statTotal} />
               </View>
             )}
           </View>
-        }
-        ListEmptyComponent={
-          !isLoading ? (
-            <View style={styles.empty}>
-              <View style={styles.emptyIcon}>
-                <Text style={{ fontSize: 24 }}>📋</Text>
+
+          {tasks.length > 0 && (
+            <View style={styles.progressWrap}>
+              <AnimatedProgressBar value={pct} height={8} />
+              <View style={styles.progressMeta}>
+                <Text style={styles.progressLabel}>
+                  {pct === 100 ? 'All done — nicely done.' : `${pct}% complete`}
+                </Text>
               </View>
-              <Text style={styles.emptyTitle}>No tasks yet</Text>
-              <Text style={styles.emptySub}>
-                Plan your day in 30 seconds.{'\n'}Tap the button below to add your first task.
-              </Text>
             </View>
-          ) : null
-        }
-        renderItem={({ item }) => (
-          <TaskRow
-            task={item}
-            onToggle={() => toggleTask(item.id)}
-            onDelete={() => deleteTask(item.id)}
-          />
+          )}
+        </Animated.View>
+
+        {/* ── Empty state ──────────────────────────────────────── */}
+        {isEmpty && (
+          <Animated.View
+            entering={FadeIn.duration(motion.slow).delay(150)}
+            style={styles.empty}
+          >
+            <View style={styles.emptyOrbOuter}>
+              <View style={styles.emptyOrbInner}>
+                <Text style={styles.emptyOrbEmoji}>✨</Text>
+              </View>
+            </View>
+            <Text style={styles.emptyTitle}>Plant your day.</Text>
+            <Text style={styles.emptySub}>
+              Add the first thing you want to{'\n'}get done — keep it small.
+            </Text>
+          </Animated.View>
         )}
-        ListFooterComponent={
-          tasks.length > 0 ? (
-            <Pressable onPress={() => setModalOpen(true)} style={styles.addInline}>
+
+        {/* ── Task list ────────────────────────────────────────── */}
+        {tasks.map((task, index) => (
+          <Animated.View
+            key={task.id}
+            // Stagger initial layout so the list "lands" instead of all at
+            // once. Cap the delay at 6 items so a long list doesn't take a
+            // perceptible time to fully render.
+            entering={FadeInDown.duration(motion.base)
+              .delay(Math.min(index, 6) * 40)
+              .easing(motion.easeOut)}
+            exiting={FadeOut.duration(motion.fast)}
+            // Layout transition handles smooth re-positioning when tasks
+            // are deleted or reordered.
+            layout={LinearTransition.springify().damping(20).stiffness(180)}
+          >
+            <AnimatedTaskRow
+              task={task}
+              onToggle={() => toggleTask(task.id)}
+              onLongPress={() => deleteTask(task.id)}
+            />
+          </Animated.View>
+        ))}
+
+        {/* ── Inline "add task" affordance ─────────────────────── */}
+        {tasks.length > 0 && (
+          <Animated.View
+            entering={FadeIn.duration(motion.base).delay(120)}
+            layout={LinearTransition.springify()}
+          >
+            <Pressable onPress={openAddTask} style={styles.addInline}>
               <Text style={styles.addInlineText}>+ Add task</Text>
             </Pressable>
-          ) : null
-        }
+          </Animated.View>
+        )}
+      </Animated.ScrollView>
+
+      {/* ── FAB ──────────────────────────────────────────────────
+          Pure launcher — pressing it pushes the AddTask screen onto
+          the stack. The user sees the bottom sheet rise up; tapping
+          the backdrop or hardware back dismisses it. */}
+      <AnimatedFab
+        onPress={openAddTask}
+        // Pulse only when there's nothing to do — gentle nudge to add the
+        // first task. Stops once any task is present.
+        pulse={isEmpty}
       />
-
-      <Pressable onPress={() => setModalOpen(true)} style={styles.fab}>
-        <Text style={styles.fabIcon}>+</Text>
-      </Pressable>
-
-      <Modal
-        visible={modalOpen}
-        transparent
-        animationType="slide"
-        onRequestClose={() => setModalOpen(false)}
-      >
-        <Pressable style={styles.modalBg} onPress={() => setModalOpen(false)}>
-          <KeyboardAvoidingView
-            behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-            style={{ width: '100%' }}
-          >
-            <Pressable style={styles.modal}>
-              <View style={styles.handle} />
-              <Text style={styles.modalTitle}>New task</Text>
-              <TextInput
-                value={draft}
-                onChangeText={setDraft}
-                placeholder="What do you want to get done?"
-                placeholderTextColor={colors.textMuted}
-                style={styles.modalInput}
-                autoFocus
-                onSubmitEditing={handleAdd}
-                returnKeyType="done"
-              />
-              <Button label="Add task" loading={creating} onPress={handleAdd} />
-            </Pressable>
-          </KeyboardAvoidingView>
-        </Pressable>
-      </Modal>
     </SafeAreaView>
-  );
-}
-
-function TaskRow({
-  task,
-  onToggle,
-  onDelete,
-}: {
-  task: Task;
-  onToggle: () => void;
-  onDelete: () => void;
-}) {
-  const isDone = !!task.doneAt;
-  return (
-    <Pressable
-      onPress={onToggle}
-      onLongPress={onDelete}
-      style={[styles.task, isDone ? styles.taskDone : styles.taskPending]}
-    >
-      <View style={[styles.circle, isDone ? styles.circleDone : styles.circlePending]}>
-        {isDone && <Text style={styles.checkmark}>✓</Text>}
-      </View>
-      <Text style={[styles.taskText, isDone && styles.taskTextDone]}>{task.title}</Text>
-    </Pressable>
   );
 }
 
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: colors.screen },
-  header: { marginBottom: spacing.lg },
-  row: {
+
+  // Header
+  header: { marginBottom: spacing.xl },
+  headerRow: {
     flexDirection: 'row',
     alignItems: 'flex-end',
     justifyContent: 'space-between',
-    marginBottom: spacing.md,
+    marginBottom: spacing.lg,
   },
-  day: { fontSize: 26, fontWeight: '500', color: colors.textPrimary, letterSpacing: -0.4 },
-  date: { fontSize: 13, color: colors.textMuted, marginTop: 2 },
-  progress: { fontSize: 12, color: colors.textMuted },
-  pbar: { height: 4, backgroundColor: colors.surfaceAlt, borderRadius: 2, overflow: 'hidden' },
-  pfill: { height: '100%', backgroundColor: colors.success, borderRadius: 2 },
+  day: {
+    fontSize: 36,
+    fontWeight: '700',
+    color: colors.textPrimary,
+    letterSpacing: -1,
+  },
+  date: {
+    fontSize: 13,
+    color: colors.textMuted,
+    marginTop: 4,
+    fontWeight: '600',
+  },
 
-  task: {
+  statBubble: {
     flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-    paddingVertical: 12,
+    alignItems: 'baseline',
+    backgroundColor: colors.surface,
+    borderRadius: radius.pill,
     paddingHorizontal: 14,
-    borderRadius: radius.md,
-    marginBottom: 6,
+    paddingVertical: 7,
+    borderWidth: 1,
+    borderColor: colors.borderStrong,
+    ...elevation.sm,
   },
-  taskDone: { backgroundColor: colors.surfaceAlt },
-  taskPending: { borderWidth: 0.5, borderColor: colors.border, backgroundColor: colors.surface },
-  circle: { width: 22, height: 22, borderRadius: 11, alignItems: 'center', justifyContent: 'center' },
-  circleDone: { backgroundColor: colors.success },
-  circlePending: { borderWidth: 1.5, borderColor: colors.textDisabled },
-  checkmark: { color: 'white', fontSize: 12, fontWeight: '700' },
-  taskText: { flex: 1, fontSize: 15, color: colors.textPrimary },
-  taskTextDone: { textDecorationLine: 'line-through', color: colors.textMuted },
+  statNumber: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: colors.accent,
+    fontVariant: ['tabular-nums'],
+  },
+  statSep: { fontSize: 14, color: colors.textMuted, marginHorizontal: 3 },
+  statTotal: {
+    fontSize: 14,
+    color: colors.textSecondary,
+    fontVariant: ['tabular-nums'],
+  },
+
+  progressWrap: { gap: 8 },
+  progressMeta: { flexDirection: 'row', justifyContent: 'flex-end' },
+  progressLabel: {
+    fontSize: 12,
+    color: colors.textSecondary,
+    fontWeight: '600',
+  },
 
   addInline: {
-    padding: 12,
-    borderWidth: 0.5,
+    padding: 16,
+    borderWidth: 1.5,
     borderStyle: 'dashed',
-    borderColor: colors.textDisabled,
+    borderColor: 'rgba(99, 102, 241, 0.3)',
+    backgroundColor: 'rgba(255, 255, 255, 0.25)',
     borderRadius: radius.md,
-    marginTop: 8,
+    marginTop: 4,
   },
-  addInlineText: { textAlign: 'center', fontSize: 13, color: colors.textSecondary },
+  addInlineText: {
+    textAlign: 'center',
+    fontSize: 13,
+    color: colors.accent,
+    fontWeight: '600',
+  },
 
-  empty: { alignItems: 'center', paddingTop: 80 },
-  emptyIcon: {
-    width: 64,
-    height: 64,
-    borderRadius: 32,
-    backgroundColor: colors.surfaceAlt,
+  // Empty state — modern orb with accent gradient ring
+  empty: { alignItems: 'center', paddingTop: 60 },
+  emptyOrbOuter: {
+    width: 96,
+    height: 96,
+    borderRadius: 48,
+    backgroundColor: 'rgba(199, 210, 254, 0.45)',
     justifyContent: 'center',
     alignItems: 'center',
-    marginBottom: 16,
+    marginBottom: 22,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.7)',
+    ...elevation.md,
   },
-  emptyTitle: { fontSize: 16, fontWeight: '500', color: colors.textPrimary, marginBottom: 6 },
-  emptySub: { fontSize: 13, color: colors.textMuted, textAlign: 'center', lineHeight: 20 },
-
-  fab: {
-    position: 'absolute',
-    right: 20,
-    bottom: 20,
-    width: 56,
-    height: 56,
-    borderRadius: 28,
-    backgroundColor: colors.primary,
+  emptyOrbInner: {
+    width: 70,
+    height: 70,
+    borderRadius: 35,
+    backgroundColor: 'rgba(255,255,255,0.7)',
     justifyContent: 'center',
     alignItems: 'center',
-    elevation: 4,
-    shadowColor: '#000',
-    shadowOpacity: 0.15,
-    shadowRadius: 8,
-    shadowOffset: { width: 0, height: 4 },
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.9)',
   },
-  fabIcon: { color: 'white', fontSize: 28, lineHeight: 30 },
-
-  modalBg: { flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'flex-end' },
-  modal: {
-    backgroundColor: colors.surface,
-    borderTopLeftRadius: 24,
-    borderTopRightRadius: 24,
-    padding: spacing.lg,
-    paddingBottom: spacing.xl,
-  },
-  handle: {
-    width: 36,
-    height: 4,
-    backgroundColor: colors.textDisabled,
-    borderRadius: 2,
-    alignSelf: 'center',
-    marginBottom: 16,
-  },
-  modalTitle: { fontSize: 18, fontWeight: '500', marginBottom: 16, color: colors.textPrimary },
-  modalInput: {
-    borderWidth: 0.5,
-    borderColor: colors.borderStrong,
-    borderRadius: radius.md,
-    padding: 12,
-    fontSize: 15,
+  emptyOrbEmoji: { fontSize: 30 },
+  emptyTitle: {
+    fontSize: 22,
+    fontWeight: '700',
     color: colors.textPrimary,
-    marginBottom: 16,
+    marginBottom: 8,
+    letterSpacing: -0.5,
+  },
+  emptySub: {
+    fontSize: 14,
+    color: colors.textSecondary,
+    textAlign: 'center',
+    lineHeight: 22,
+    fontWeight: '500',
   },
 });
