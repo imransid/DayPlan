@@ -1,0 +1,50 @@
+name: Trigger scheduled Discord posts
+
+# Drives the DayPlan posting scheduler from an external clock, so posts fire even
+# when the backend host sleeps (e.g. Render free tier) or has no in-process cron.
+# It calls POST /api/internal/cron/run-due-posts, which runs the same logic the
+# in-process @Cron would. Posting is idempotent, so firing often never duplicates.
+#
+# Setup (repo → Settings → Secrets and variables → Actions):
+#   - Secret  CRON_SECRET   = the same value as the backend's CRON_SECRET env var
+#   - Variable BACKEND_URL  = https://new-plan-292b.onrender.com   (no trailing slash)
+#
+# NOTE: GitHub's minimum schedule granularity is 5 minutes and runs are best-effort
+# (often delayed under load, and disabled after 60 days of repo inactivity). Combined
+# with the backend's catch-up logic this posts within a few minutes of the target
+# time. For minute-accurate posting use a dedicated cron service (see backend/README.md).
+
+on:
+  schedule:
+    - cron: "*/5 * * * *" # every 5 minutes (UTC)
+  workflow_dispatch: {} # allow manual runs from the Actions tab
+
+concurrency:
+  group: scheduled-posts
+  cancel-in-progress: false
+
+jobs:
+  trigger:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Call run-due-posts
+        env:
+          BACKEND_URL: ${{ vars.BACKEND_URL }}
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+        run: |
+          if [ -z "$BACKEND_URL" ] || [ -z "$CRON_SECRET" ]; then
+            echo "::error::Set the BACKEND_URL repo variable and CRON_SECRET repo secret."
+            exit 1
+          fi
+          # --max-time is generous so a free-tier cold start (spin-up) still completes.
+          code=$(curl -sS -o /tmp/body.txt -w '%{http_code}' \
+            --max-time 120 --retry 2 --retry-delay 10 \
+            -X POST "$BACKEND_URL/api/internal/cron/run-due-posts" \
+            -H "Authorization: Bearer $CRON_SECRET")
+          echo "HTTP $code"
+          cat /tmp/body.txt || true
+          # 2xx = ok. 401 = wrong/missing secret. Fail the job so it's visible.
+          if [ "$code" -lt 200 ] || [ "$code" -ge 300 ]; then
+            echo "::error::run-due-posts returned HTTP $code"
+            exit 1
+          fi

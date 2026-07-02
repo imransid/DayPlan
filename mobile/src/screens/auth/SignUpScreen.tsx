@@ -2,10 +2,11 @@ import React, { useState } from 'react';
 import { ScrollView, Text, StyleSheet, Alert } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import * as RNLocalize from 'react-native-localize';
+import Animated, { FadeInDown } from 'react-native-reanimated';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 
 import { Button, Input, Heading } from '../../components/UI';
-import { colors, spacing } from '../../theme';
+import { colors, spacing, motion } from '../../theme';
 import { useSignUpMutation } from '../../store/api/api';
 import { useAppDispatch } from '../../store/hooks';
 import { setCredentials } from '../../store/slices/authSlice';
@@ -41,35 +42,55 @@ export function SignUpScreen({ navigation }: Props) {
     }
   };
 
+  const stagger = (index: number) =>
+    FadeInDown.duration(motion.base).delay(index * 70).easing(motion.easeOut);
+
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: colors.screen }}>
-      <ScrollView contentContainerStyle={styles.container}>
-        <Heading subtitle="Quick sign up — under 30 seconds.">Create account</Heading>
-        <Input
-          label="EMAIL"
-          autoCapitalize="none"
-          keyboardType="email-address"
-          value={email}
-          onChangeText={setEmail}
-          placeholder="you@example.com"
-        />
-        <Input
-          label="PASSWORD"
-          secureTextEntry
-          value={password}
-          onChangeText={setPassword}
-          placeholder="At least 8 characters"
-        />
-        <Input
-          label="NAME (OPTIONAL)"
-          value={name}
-          onChangeText={setName}
-          placeholder="Rashid Ahmed"
-        />
-        <Button label="Continue" loading={isLoading} onPress={handleSubmit} />
-        <Text style={styles.link} onPress={() => navigation.navigate('SignIn')}>
-          Already have an account? Sign in
-        </Text>
+      <ScrollView contentContainerStyle={styles.container} keyboardShouldPersistTaps="handled">
+        <Animated.View entering={stagger(0)}>
+          <Heading subtitle="Quick sign up — under 30 seconds.">Create account</Heading>
+        </Animated.View>
+
+        <Animated.View entering={stagger(1)}>
+          <Input
+            label="EMAIL"
+            autoCapitalize="none"
+            keyboardType="email-address"
+            value={email}
+            onChangeText={setEmail}
+            placeholder="you@example.com"
+          />
+        </Animated.View>
+
+        <Animated.View entering={stagger(2)}>
+          <Input
+            label="PASSWORD"
+            secureTextEntry
+            value={password}
+            onChangeText={setPassword}
+            placeholder="At least 8 characters"
+          />
+        </Animated.View>
+
+        <Animated.View entering={stagger(3)}>
+          <Input
+            label="NAME (OPTIONAL)"
+            value={name}
+            onChangeText={setName}
+            placeholder="Rashid Ahmed"
+          />
+        </Animated.View>
+
+        <Animated.View entering={stagger(4)} style={{ marginTop: 4 }}>
+          <Button label="Continue" loading={isLoading} onPress={handleSubmit} />
+        </Animated.View>
+
+        <Animated.View entering={stagger(5)}>
+          <Text style={styles.link} onPress={() => navigation.navigate('SignIn')}>
+            Already have an account? <Text style={styles.linkAccent}>Sign in</Text>
+          </Text>
+        </Animated.View>
       </ScrollView>
     </SafeAreaView>
   );
@@ -78,4 +99,5 @@ export function SignUpScreen({ navigation }: Props) {
 const styles = StyleSheet.create({
   container: { padding: spacing.lg, gap: 4 },
   link: { textAlign: 'center', color: colors.textSecondary, marginTop: 16, fontSize: 13 },
+  linkAccent: { color: colors.accent, fontWeight: '600' },
 });

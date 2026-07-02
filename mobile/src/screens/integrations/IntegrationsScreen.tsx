@@ -1,10 +1,22 @@
 import React from 'react';
-import { ScrollView, View, Text, StyleSheet, Pressable, ActivityIndicator, Linking, Alert } from 'react-native';
+import {
+  ScrollView,
+  View,
+  Text,
+  StyleSheet,
+  Pressable,
+  ActivityIndicator,
+  Linking,
+  Alert,
+} from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import InAppBrowser from 'react-native-inappbrowser-reborn';
+import Animated, { FadeInDown } from 'react-native-reanimated';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 
-import { colors, spacing, radius } from '../../theme';
+import { PressScale } from '../../components/UI';
+import { ChevronRightIcon, ChevronLeftIcon } from '../../components/Icon';
+import { colors, spacing, radius, motion, elevation } from '../../theme';
 import { useGetConnectionsQuery, useLazyGetDiscordAuthUrlQuery } from '../../store/api/api';
 import type { MainStackParamList } from '../../navigation/types';
 
@@ -20,8 +32,6 @@ export function IntegrationsScreen({ navigation }: Props) {
       const isAvailable = await InAppBrowser.isAvailable();
 
       if (isAvailable) {
-        // ASWebAuthenticationSession on iOS, Custom Tab on Android — both forward
-        // the dayplan:// deep link redirect back to the app automatically.
         const browserResult = await InAppBrowser.openAuth(result.url, 'dayplan://discord-connected', {
           ephemeralWebSession: false,
           showTitle: true,
@@ -34,7 +44,6 @@ export function IntegrationsScreen({ navigation }: Props) {
           refetch();
         }
       } else {
-        // Fallback to system browser if InAppBrowser isn't available
         await Linking.openURL(result.url);
       }
     } catch (err: any) {
@@ -44,72 +53,94 @@ export function IntegrationsScreen({ navigation }: Props) {
 
   const hasConnections = connections.length > 0;
 
+  const stagger = (i: number) =>
+    FadeInDown.duration(motion.base).delay(i * 60).easing(motion.easeOut);
+
   return (
-    <SafeAreaView style={styles.safe}>
-      <ScrollView contentContainerStyle={styles.container}>
+    <SafeAreaView style={styles.safe} edges={['top']}>
+      <ScrollView
+        contentContainerStyle={styles.container}
+        showsVerticalScrollIndicator={false}
+      >
         <Pressable onPress={() => navigation.goBack()} style={styles.back}>
-          <Text style={styles.backText}>‹ Integrations</Text>
+          <ChevronLeftIcon size={20} color={colors.textPrimary} />
+          <Text style={styles.backText}>Integrations</Text>
         </Pressable>
 
         {isLoading ? (
           <ActivityIndicator color={colors.textMuted} style={{ marginTop: 40 }} />
         ) : (
           <>
-            <Text style={styles.sectionLabel}>CONNECTED</Text>
+            <Animated.Text entering={stagger(0)} style={styles.sectionLabel}>
+              CONNECTED
+            </Animated.Text>
+
             {hasConnections ? (
-              connections.map((conn) => (
-                <Pressable
-                  key={conn.id}
-                  onPress={() =>
-                    navigation.navigate('ChannelManager', {
-                      guildId: conn.guildId,
-                      guildName: conn.guildName,
-                    })
-                  }
-                  style={[styles.card, styles.cardConnected]}
-                >
-                  <View style={[styles.icon, { backgroundColor: colors.discord }]}>
-                    <Text style={styles.iconText}>D</Text>
-                  </View>
-                  <View style={{ flex: 1 }}>
-                    <Text style={styles.cardName}>{conn.guildName}</Text>
-                    <Text style={styles.cardSub}>
-                      Discord · {conn.channels.length} channel
-                      {conn.channels.length === 1 ? '' : 's'}
-                      {conn.channels.length > 0
-                        ? ` · ${conn.channels.map((c) => `#${c.channelName}`).join(', ')}`
-                        : ''}
-                    </Text>
-                  </View>
-                  <Text style={styles.chevron}>›</Text>
-                </Pressable>
+              connections.map((conn, idx) => (
+                <Animated.View key={conn.id} entering={stagger(idx + 1)}>
+                  <PressScale
+                    onPress={() =>
+                      navigation.navigate('ChannelManager', {
+                        guildId: conn.guildId,
+                        guildName: conn.guildName,
+                      })
+                    }
+                    scaleTo={0.98}
+                    style={[styles.card, styles.cardConnected]}
+                  >
+                    <View style={[styles.icon, { backgroundColor: colors.discord }]}>
+                      <Text style={styles.iconText}>D</Text>
+                    </View>
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.cardName}>{conn.guildName}</Text>
+                      <Text style={styles.cardSub}>
+                        Discord · {conn.channels.length} channel
+                        {conn.channels.length === 1 ? '' : 's'}
+                      </Text>
+                    </View>
+                    <ChevronRightIcon size={18} color={colors.textMuted} />
+                  </PressScale>
+                </Animated.View>
               ))
             ) : (
-              <Text style={styles.noneText}>No services connected yet.</Text>
+              <Animated.Text entering={stagger(1)} style={styles.noneText}>
+                No services connected yet.
+              </Animated.Text>
             )}
 
-            <Text style={[styles.sectionLabel, { marginTop: 24 }]}>AVAILABLE</Text>
-            <Pressable onPress={handleConnectDiscord} style={styles.card}>
-              <View style={[styles.icon, { backgroundColor: colors.discord }]}>
-                <Text style={styles.iconText}>D</Text>
+            <Animated.Text
+              entering={stagger(connections.length + 2)}
+              style={[styles.sectionLabel, { marginTop: 28 }]}
+            >
+              AVAILABLE
+            </Animated.Text>
+
+            <Animated.View entering={stagger(connections.length + 3)}>
+              <PressScale onPress={handleConnectDiscord} scaleTo={0.98} style={styles.card}>
+                <View style={[styles.icon, { backgroundColor: colors.discord }]}>
+                  <Text style={styles.iconText}>D</Text>
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.cardName}>
+                    {hasConnections ? 'Add another Discord server' : 'Discord'}
+                  </Text>
+                  <Text style={styles.cardSub}>Multi-channel posting</Text>
+                </View>
+                <Text style={styles.addText}>+ Add</Text>
+              </PressScale>
+            </Animated.View>
+
+            <Animated.View entering={stagger(connections.length + 4)}>
+              <View style={styles.card}>
+                <View style={[styles.icon, { backgroundColor: colors.slack, opacity: 0.6 }]}>
+                  <Text style={styles.iconText}>S</Text>
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.cardName}>Slack</Text>
+                  <Text style={styles.cardSub}>Coming soon</Text>
+                </View>
               </View>
-              <View style={{ flex: 1 }}>
-                <Text style={styles.cardName}>
-                  {hasConnections ? 'Add another Discord server' : 'Discord'}
-                </Text>
-                <Text style={styles.cardSub}>Multi-channel posting</Text>
-              </View>
-              <Text style={styles.addText}>+ Add</Text>
-            </Pressable>
-            <View style={styles.card}>
-              <View style={[styles.icon, { backgroundColor: colors.slack }]}>
-                <Text style={styles.iconText}>S</Text>
-              </View>
-              <View style={{ flex: 1 }}>
-                <Text style={styles.cardName}>Slack</Text>
-                <Text style={styles.cardSub}>Coming soon</Text>
-              </View>
-            </View>
+            </Animated.View>
           </>
         )}
       </ScrollView>
@@ -119,27 +150,45 @@ export function IntegrationsScreen({ navigation }: Props) {
 
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: colors.screen },
-  container: { padding: spacing.lg },
-  back: { paddingVertical: 8, marginBottom: 8 },
-  backText: { fontSize: 18, fontWeight: '500', color: colors.textPrimary },
-  sectionLabel: { fontSize: 11, color: colors.textMuted, fontWeight: '600', letterSpacing: 0.4, marginBottom: 8 },
+  container: { padding: spacing.lg, paddingBottom: spacing.xxl },
+  back: { flexDirection: 'row', alignItems: 'center', gap: 4, paddingVertical: 8, marginBottom: 8 },
+  backText: { fontSize: 18, fontWeight: '700', color: colors.textPrimary, letterSpacing: -0.3 },
+
+  sectionLabel: {
+    fontSize: 11,
+    color: colors.textMuted,
+    fontWeight: '700',
+    letterSpacing: 0.6,
+    marginBottom: 8,
+    marginTop: 4,
+  },
+
   card: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 12,
+    gap: 14,
     padding: 14,
     backgroundColor: colors.surface,
-    borderRadius: radius.md,
-    borderWidth: 0.5,
+    borderRadius: radius.lg,
+    borderWidth: 1,
     borderColor: colors.border,
-    marginBottom: 8,
+    marginBottom: 10,
+    ...elevation.sm,
   },
-  cardConnected: { borderColor: colors.success, backgroundColor: colors.successBg },
-  icon: { width: 40, height: 40, borderRadius: 10, justifyContent: 'center', alignItems: 'center' },
-  iconText: { color: 'white', fontWeight: '600', fontSize: 16 },
-  cardName: { fontSize: 14, fontWeight: '500', color: colors.textPrimary },
+  cardConnected: {
+    borderColor: 'rgba(79, 157, 135, 0.45)',
+    backgroundColor: colors.successBg,
+  },
+  icon: {
+    width: 44,
+    height: 44,
+    borderRadius: 12,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  iconText: { color: 'white', fontWeight: '700', fontSize: 18 },
+  cardName: { fontSize: 15, fontWeight: '600', color: colors.textPrimary, letterSpacing: -0.1 },
   cardSub: { fontSize: 12, color: colors.textMuted, marginTop: 2 },
-  chevron: { fontSize: 18, color: colors.textMuted },
-  addText: { fontSize: 13, color: colors.textPrimary, fontWeight: '500' },
-  noneText: { color: colors.textMuted, fontSize: 13, marginVertical: 8 },
+  addText: { fontSize: 13, color: colors.accent, fontWeight: '700' },
+  noneText: { color: colors.textMuted, fontSize: 14, marginVertical: 8 },
 });

@@ -47,3 +47,39 @@ export interface ReminderSchedule {
   hourlyEnabled: boolean;
   endOfDayEnabled: boolean;
 }
+
+// ─── Notes ────────────────────────────────────────────────────────────────
+// Local-first notes with an optional single file attachment. Stored on-device
+// via redux-persist; the attached file's bytes live in the app sandbox and are
+// referenced here by a path RELATIVE to the document directory (absolute iOS
+// container paths change across reinstalls/OS updates, so we never persist them
+// — the displayable file:// URI is rebuilt at render time from this).
+export type AttachmentKind = 'image' | 'audio' | 'video' | 'file';
+
+export interface NoteAttachment {
+  /** Path under DocumentDir, e.g. "notes_attachments/att_1699..._ab12.jpg". */
+  relativePath: string;
+  kind: AttachmentKind;
+  /** Original display filename. */
+  name: string;
+  /** MIME type, e.g. "image/jpeg". */
+  mime: string;
+  /** Size in bytes (0 if the picker didn't report it). */
+  size: number;
+  /** Duration for audio/video, in milliseconds. */
+  durationMs?: number;
+  /** Pixel dimensions for image/video. */
+  width?: number;
+  height?: number;
+}
+
+export interface Note {
+  id: string;
+  title: string;
+  body: string;
+  /** ISO 8601 UTC instant. */
+  createdAt: string;
+  /** ISO 8601 UTC instant. */
+  updatedAt: string;
+  attachment: NoteAttachment | null;
+}
