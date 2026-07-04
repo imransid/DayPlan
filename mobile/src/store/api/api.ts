@@ -17,6 +17,8 @@ import type {
   DiscordConnection,
   ChannelFormat,
   ReminderSchedule,
+  MySharedChannels,
+  SharedChannelSummary,
 } from "../../types";
 
 const baseQuery = fetchBaseQuery({
@@ -58,7 +60,20 @@ export interface TestPublishResponse {
 
 export const api = createApi({
   baseQuery: baseQueryWithAuth,
-  tagTypes: ["Tasks", "User", "DiscordConnections", "DiscordChannels"],
+  // Background-first defaults: keep cached data around so screens render
+  // instantly, and silently re-sync when the app returns to the foreground.
+  // (refetchOnFocus is driven by AppState — see store/rtkAppStateFocus.ts —
+  // since React Native has no browser focus/online events.)
+  refetchOnFocus: true,
+  refetchOnReconnect: true,
+  keepUnusedDataFor: 300,
+  tagTypes: [
+    "Tasks",
+    "User",
+    "DiscordConnections",
+    "DiscordChannels",
+    "SharedChannels",
+  ],
   endpoints: (builder) => ({
     // ─── Auth ────────────────────────────────────────────
     signUp: builder.mutation<
@@ -84,6 +99,18 @@ export const api = createApi({
     }),
     updateProfile: builder.mutation<User, Partial<User>>({
       query: (body) => ({ url: "/users/me", method: "PATCH", body }),
+      async onQueryStarted(body, { dispatch, queryFulfilled }) {
+        const patch = dispatch(
+          api.util.updateQueryData("getMe", undefined, (draft) => {
+            Object.assign(draft, body);
+          }),
+        );
+        try {
+          await queryFulfilled;
+        } catch {
+          patch.undo();
+        }
+      },
       invalidatesTags: ["User"],
     }),
     updateSchedule: builder.mutation<
@@ -91,7 +118,37 @@ export const api = createApi({
       Partial<ReminderSchedule>
     >({
       query: (body) => ({ url: "/users/me/schedule", method: "PATCH", body }),
+      async onQueryStarted(body, { dispatch, queryFulfilled }) {
+        const patch = dispatch(
+          api.util.updateQueryData("getMe", undefined, (draft) => {
+            if (draft.reminderSchedule) {
+              Object.assign(draft.reminderSchedule, body);
+            }
+          }),
+        );
+        try {
+          await queryFulfilled;
+        } catch {
+          patch.undo();
+        }
+      },
       invalidatesTags: ["User"],
+    }),
+
+    // ─── Scheduler ───────────────────────────────────────
+    /**
+     * Fire any of the current user's DUE scheduled Discord posts right now.
+     * Called when the app comes to the foreground so a post goes out the moment
+     * the user opens the app after their configured time — reliable even when
+     * the backend is a sleeping free tier whose every-minute cron isn't ticking.
+     * Idempotent per (user, kind, local-day), so calling it on every foreground
+     * never double-posts.
+     */
+    runMyScheduledPosts: builder.mutation<
+      { ranAt: string; goalPosted: number; workUpdatePosted: number },
+      void
+    >({
+      query: () => ({ url: '/scheduler/run-mine', method: 'POST' }),
     }),
 
     // ─── Tasks ───────────────────────────────────────────
@@ -107,7 +164,35 @@ export const api = createApi({
     }),
     createTask: builder.mutation<Task, { title: string; date?: string }>({
       query: (body) => ({ url: "/tasks", method: "POST", body }),
-      invalidatesTags: ["Tasks"],
+      // Optimistic: the row appears the instant the sheet closes; the server
+      // response swaps the placeholder for the real row. No invalidation, so
+      // there's no blocking refetch.
+      async onQueryStarted(body, { dispatch, queryFulfilled }) {
+        const date = body.date ?? utcTaskDayStartIso();
+        const tempId = `temp-${Date.now()}`;
+        const patch = dispatch(
+          api.util.updateQueryData("getTasks", date, (draft) => {
+            draft.push({
+              id: tempId,
+              title: body.title,
+              date,
+              doneAt: null,
+              position: draft.length,
+            });
+          }),
+        );
+        try {
+          const { data } = await queryFulfilled;
+          dispatch(
+            api.util.updateQueryData("getTasks", date, (draft) => {
+              const i = draft.findIndex((t) => t.id === tempId);
+              if (i >= 0) draft[i] = data;
+            }),
+          );
+        } catch {
+          patch.undo();
+        }
+      },
     }),
     /**
      * Idempotent: copies yesterday's incomplete tasks into today. The mobile
@@ -148,11 +233,42 @@ export const api = createApi({
         method: "PATCH",
         body,
       }),
-      invalidatesTags: ["Tasks"],
+      async onQueryStarted({ id, title, position }, { dispatch, queryFulfilled }) {
+        const date = utcTaskDayStartIso();
+        const patch = dispatch(
+          api.util.updateQueryData("getTasks", date, (draft) => {
+            const t = draft.find((task) => task.id === id);
+            if (!t) return;
+            if (title !== undefined) t.title = title;
+            if (position !== undefined) {
+              draft.splice(draft.indexOf(t), 1);
+              draft.splice(position, 0, t);
+            }
+          }),
+        );
+        try {
+          await queryFulfilled;
+        } catch {
+          patch.undo();
+        }
+      },
     }),
     deleteTask: builder.mutation<void, string>({
       query: (id) => ({ url: `/tasks/${id}`, method: "DELETE" }),
-      invalidatesTags: ["Tasks"],
+      async onQueryStarted(id, { dispatch, queryFulfilled }) {
+        const date = utcTaskDayStartIso();
+        const patch = dispatch(
+          api.util.updateQueryData("getTasks", date, (draft) => {
+            const i = draft.findIndex((t) => t.id === id);
+            if (i >= 0) draft.splice(i, 1);
+          }),
+        );
+        try {
+          await queryFulfilled;
+        } catch {
+          patch.undo();
+        }
+      },
     }),
 
     // ─── Discord ─────────────────────────────────────────
@@ -185,6 +301,25 @@ export const api = createApi({
       }
     >({
       query: (body) => ({ url: "/discord/channels", method: "POST", body }),
+      // Optimistic: channel switches flip instantly; the wipe-and-replace POST
+      // reconciles in the background. Invalidation stays as a safety re-sync.
+      async onQueryStarted(body, { dispatch, queryFulfilled }) {
+        const patch = dispatch(
+          api.util.updateQueryData("getConnections", undefined, (draft) => {
+            const conn = draft.find((c) => c.guildId === body.guildId);
+            if (!conn) return;
+            body.channels.forEach((u) => {
+              const ch = conn.channels.find((c) => c.channelId === u.channelId);
+              if (ch) Object.assign(ch, u);
+            });
+          }),
+        );
+        try {
+          await queryFulfilled;
+        } catch {
+          patch.undo();
+        }
+      },
       invalidatesTags: ["DiscordConnections"],
     }),
     /**
@@ -201,6 +336,109 @@ export const api = createApi({
         body,
       }),
     }),
+
+    // ─── Team / shared channels ──────────────────────────
+    getSharedChannels: builder.query<MySharedChannels, void>({
+      query: () => "/discord/shared-channels",
+      providesTags: ["SharedChannels"],
+    }),
+    createSharedChannel: builder.mutation<
+      SharedChannelSummary,
+      { guildId: string; channelId: string }
+    >({
+      query: (body) => ({
+        url: "/discord/shared-channels",
+        method: "POST",
+        body,
+      }),
+      invalidatesTags: ["SharedChannels"],
+    }),
+    updateSharedChannel: builder.mutation<
+      SharedChannelSummary,
+      { id: string; enabled?: boolean; postGoals?: boolean; postUpdates?: boolean }
+    >({
+      query: ({ id, ...body }) => ({
+        url: `/discord/shared-channels/${id}`,
+        method: "PATCH",
+        body,
+      }),
+      async onQueryStarted({ id, ...changes }, { dispatch, queryFulfilled }) {
+        const patch = dispatch(
+          api.util.updateQueryData("getSharedChannels", undefined, (draft) => {
+            const owned = draft.owned.find((s) => s.id === id);
+            if (owned) Object.assign(owned, changes);
+          }),
+        );
+        try {
+          await queryFulfilled;
+        } catch {
+          patch.undo();
+        }
+      },
+      invalidatesTags: ["SharedChannels"],
+    }),
+    rotateSharedChannelCode: builder.mutation<
+      { id: string; joinCode: string },
+      string
+    >({
+      query: (id) => ({
+        url: `/discord/shared-channels/${id}/rotate-code`,
+        method: "POST",
+      }),
+      invalidatesTags: ["SharedChannels"],
+    }),
+    joinSharedChannel: builder.mutation<
+      { sharedChannelId: string; channelName: string },
+      { joinCode: string }
+    >({
+      query: (body) => ({
+        url: "/discord/shared-channels/join",
+        method: "POST",
+        body,
+      }),
+      // Append on SUCCESS (server generates the id) so the joined list shows it
+      // immediately, before the invalidation refetch reconciles.
+      async onQueryStarted(_, { dispatch, queryFulfilled }) {
+        try {
+          const { data } = await queryFulfilled;
+          dispatch(
+            api.util.updateQueryData("getSharedChannels", undefined, (draft) => {
+              if (!draft.joined.some((s) => s.id === data.sharedChannelId)) {
+                draft.joined.push({
+                  id: data.sharedChannelId,
+                  channelName: data.channelName,
+                  enabled: true,
+                });
+              }
+            }),
+          );
+        } catch {
+          // The screen surfaces the error to the user.
+        }
+      },
+      invalidatesTags: ["SharedChannels"],
+    }),
+    leaveSharedChannel: builder.mutation<{ ok: true }, string>({
+      query: (id) => ({
+        url: `/discord/shared-channels/${id}/leave`,
+        method: "DELETE",
+      }),
+      // Optimistic: the joined card vanishes the moment you tap Leave.
+      async onQueryStarted(id, { dispatch, queryFulfilled }) {
+        const patch = dispatch(
+          api.util.updateQueryData("getSharedChannels", undefined, (draft) => {
+            const i = draft.joined.findIndex((s) => s.id === id);
+            if (i >= 0) draft.joined.splice(i, 1);
+          }),
+        );
+        try {
+          await queryFulfilled;
+        } catch {
+          patch.undo();
+        }
+      },
+      invalidatesTags: ["SharedChannels"],
+    }),
   }),
 });
 
@@ -210,6 +448,7 @@ export const {
   useGetMeQuery,
   useUpdateProfileMutation,
   useUpdateScheduleMutation,
+  useRunMyScheduledPostsMutation,
   useGetTasksQuery,
   useGetTaskHistoryQuery,
   useCreateTaskMutation,
@@ -222,4 +461,10 @@ export const {
   useListAvailableChannelsQuery,
   useSaveChannelsMutation,
   useTestPublishMutation,
+  useGetSharedChannelsQuery,
+  useCreateSharedChannelMutation,
+  useUpdateSharedChannelMutation,
+  useRotateSharedChannelCodeMutation,
+  useJoinSharedChannelMutation,
+  useLeaveSharedChannelMutation,
 } = api;

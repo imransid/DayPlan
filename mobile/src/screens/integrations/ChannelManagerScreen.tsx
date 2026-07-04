@@ -7,15 +7,23 @@ import {
   Pressable,
   Switch,
   ActivityIndicator,
+  Share,
+  Alert,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 
 import { Button } from '../../components/UI';
 import { colors, spacing, radius } from '../../theme';
-import { useGetConnectionsQuery, useSaveChannelsMutation } from '../../store/api/api';
+import {
+  useGetConnectionsQuery,
+  useSaveChannelsMutation,
+  useGetSharedChannelsQuery,
+  useCreateSharedChannelMutation,
+  useRotateSharedChannelCodeMutation,
+} from '../../store/api/api';
 import type { MainStackParamList } from '../../navigation/types';
-import type { DiscordChannel } from '../../types';
+import type { DiscordChannel, OwnedSharedChannel } from '../../types';
 
 type Props = NativeStackScreenProps<MainStackParamList, 'ChannelManager'>;
 
@@ -24,9 +32,13 @@ type ToggleField = 'enabled' | 'postGoals' | 'postUpdates';
 export function ChannelManagerScreen({ route, navigation }: Props) {
   const { guildId, guildName } = route.params;
   const { data: connections = [], isLoading } = useGetConnectionsQuery();
+  const { data: shared } = useGetSharedChannelsQuery();
   const [saveChannels, { isLoading: saving }] = useSaveChannelsMutation();
 
   const conn = connections.find((c) => c.guildId === guildId);
+  const ownedByChannelId = new Map(
+    (shared?.owned ?? []).map((s) => [s.channelId, s]),
+  );
 
   // Toggle one of three fields on a channel and persist the whole list.
   // We send the full list every time because the backend save is a wipe-and-replace.
@@ -48,7 +60,9 @@ export function ChannelManagerScreen({ route, navigation }: Props) {
     });
   };
 
-  if (isLoading) {
+  // Only block on the very first load with no cached connection; otherwise
+  // render the (cached) channels immediately while any refetch runs in the bg.
+  if (isLoading && !conn) {
     return (
       <SafeAreaView style={styles.safe}>
         <ActivityIndicator color={colors.textMuted} style={{ marginTop: 40 }} />
@@ -84,6 +98,8 @@ export function ChannelManagerScreen({ route, navigation }: Props) {
             channel={channel}
             saving={saving}
             onToggle={(field) => handleToggle(channel.channelId, field)}
+            guildId={guildId}
+            share={ownedByChannelId.get(channel.channelId)}
           />
         ))}
 
@@ -101,10 +117,14 @@ function ChannelCard({
   channel,
   saving,
   onToggle,
+  guildId,
+  share,
 }: {
   channel: DiscordChannel;
   saving: boolean;
   onToggle: (field: ToggleField) => void;
+  guildId: string;
+  share?: OwnedSharedChannel;
 }) {
   return (
     <View style={styles.channelCard}>
@@ -145,8 +165,108 @@ function ChannelCard({
             disabled={saving}
             last
           />
+          <TeamShareRow
+            channelId={channel.channelId}
+            guildId={guildId}
+            share={share}
+          />
         </View>
       )}
+    </View>
+  );
+}
+
+function TeamShareRow({
+  channelId,
+  guildId,
+  share,
+}: {
+  channelId: string;
+  guildId: string;
+  share?: OwnedSharedChannel;
+}) {
+  const [create, { isLoading: creating }] = useCreateSharedChannelMutation();
+  const [rotate, { isLoading: rotating }] = useRotateSharedChannelCodeMutation();
+
+  const onCreate = async () => {
+    try {
+      await create({ guildId, channelId }).unwrap();
+    } catch (err: any) {
+      Alert.alert('Could not create team channel', err?.data?.message ?? 'Try again');
+    }
+  };
+
+  const onShare = () => {
+    if (!share) return;
+    Share.share({
+      message:
+        `Join my DayPlan team channel. Open DayPlan → Integrations → ` +
+        `"Join a team channel" and enter this code:\n\n${share.joinCode}`,
+    }).catch(() => {
+      // User dismissed the share sheet (iOS rejects) — nothing to do.
+    });
+  };
+
+  const onRotate = () => {
+    if (!share) return;
+    Alert.alert(
+      'Rotate code?',
+      'The current code stops working immediately. Members already joined stay in.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Rotate', style: 'destructive', onPress: () => rotate(share.id) },
+      ],
+    );
+  };
+
+  if (!share) {
+    return (
+      <View style={styles.teamRow}>
+        <View style={{ flex: 1 }}>
+          <Text style={styles.subRowLabel}>Make this a team channel</Text>
+          <Text style={styles.subRowSub}>
+            Teammates join with a code — their plans post here too
+          </Text>
+        </View>
+        <Button
+          label={creating ? '…' : 'Share'}
+          variant="secondary"
+          fullWidth={false}
+          disabled={creating}
+          onPress={onCreate}
+          style={styles.teamBtn}
+        />
+      </View>
+    );
+  }
+
+  return (
+    <View style={styles.teamShareBox}>
+      <Text style={styles.teamShareLabel}>TEAM JOIN CODE</Text>
+      <Text style={styles.teamCode} selectable>
+        {share.joinCode}
+      </Text>
+      <Text style={styles.teamMeta}>
+        {share.memberCount} member{share.memberCount === 1 ? '' : 's'} · everyone's
+        daily plan posts here
+      </Text>
+      <View style={styles.teamActions}>
+        <Button
+          label="Share code"
+          variant="accent"
+          fullWidth={false}
+          onPress={onShare}
+          style={styles.teamBtn}
+        />
+        <Button
+          label={rotating ? '…' : 'Rotate'}
+          variant="outline"
+          fullWidth={false}
+          disabled={rotating}
+          onPress={onRotate}
+          style={styles.teamBtn}
+        />
+      </View>
     </View>
   );
 }
@@ -227,4 +347,36 @@ const styles = StyleSheet.create({
   subRowBorder: { borderBottomWidth: 0.5, borderBottomColor: colors.border },
   subRowLabel: { fontSize: 13, color: colors.textPrimary, fontWeight: '500' },
   subRowSub: { fontSize: 11, color: colors.textMuted, marginTop: 1 },
+
+  // ─── Team share ───
+  teamRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+    borderTopWidth: 0.5,
+    borderTopColor: colors.border,
+  },
+  teamBtn: { paddingHorizontal: spacing.lg, minWidth: 96 },
+  teamShareBox: {
+    paddingVertical: 14,
+    paddingHorizontal: 14,
+    borderTopWidth: 0.5,
+    borderTopColor: colors.border,
+  },
+  teamShareLabel: {
+    fontSize: 10,
+    fontWeight: '800',
+    letterSpacing: 0.6,
+    color: colors.textMuted,
+  },
+  teamCode: {
+    fontSize: 22,
+    fontWeight: '800',
+    letterSpacing: 3,
+    color: colors.accent,
+    marginTop: 4,
+  },
+  teamMeta: { fontSize: 11, color: colors.textMuted, marginTop: 4 },
+  teamActions: { flexDirection: 'row', gap: spacing.sm, marginTop: 12 },
 });

@@ -11,6 +11,7 @@ import { SettingsScreen } from '../screens/settings/SettingsScreen';
 import { IntegrationsScreen } from '../screens/integrations/IntegrationsScreen';
 import { ChannelManagerScreen } from '../screens/integrations/ChannelManagerScreen';
 import { ChannelPickerScreen } from '../screens/integrations/ChannelPickerScreen';
+import { JoinTeamChannelScreen } from '../screens/integrations/JoinTeamChannelScreen';
 import { AnimatedTabBar } from '../components/AnimatedTabBar';
 import type { MainTabParamList, MainStackParamList } from './types';
 
@@ -53,6 +54,7 @@ export function MainNavigator() {
       <Stack.Screen name="Integrations" component={IntegrationsScreen} />
       <Stack.Screen name="ChannelManager" component={ChannelManagerScreen} />
       <Stack.Screen name="ChannelPicker" component={ChannelPickerScreen} />
+      <Stack.Screen name="JoinTeamChannel" component={JoinTeamChannelScreen} />
 
       {/*
         AddTask — bottom-sheet screen.

@@ -1,10 +1,12 @@
 import React, { useEffect } from 'react';
-import { Dimensions, Platform, StyleSheet, View } from 'react-native';
+import { AppState, Dimensions, Platform, StyleSheet, View } from 'react-native';
 import { BlurView } from '@react-native-community/blur';
 import Animated, {
   Easing,
+  cancelAnimation,
   type SharedValue,
   useAnimatedStyle,
+  useReducedMotion,
   useSharedValue,
   withRepeat,
   withTiming,
@@ -90,16 +92,44 @@ function AnimatedBlob({
 
 export function LiquidGlassBackground() {
   const phase = useSharedValue(0);
+  const reduceMotion = useReducedMotion();
 
   useEffect(() => {
+    // Respect the OS "reduce motion" accessibility setting — leave the canvas
+    // static rather than driving an endless worklet.
+    if (reduceMotion) {
+      cancelAnimation(phase);
+      return;
+    }
+
     // Single repeating timing drives every blob — only one worklet thread
     // active for the whole background.
-    phase.value = withRepeat(
-      withTiming(1, { duration: 18000, easing: Easing.inOut(Easing.sin) }),
-      -1,
-      true,
-    );
-  }, [phase]);
+    const startLoop = () => {
+      cancelAnimation(phase);
+      phase.value = withRepeat(
+        withTiming(1, { duration: 18000, easing: Easing.inOut(Easing.sin) }),
+        -1,
+        true,
+      );
+    };
+    startLoop();
+
+    // Pause the infinite worklet while the app is backgrounded and restart it
+    // on return. An uncancelled withRepeat(-1) driving a shared value against a
+    // torn-down / re-attached Fabric surface across background↔foreground
+    // transitions is a known instability source under the New Architecture —
+    // this keeps the loop bound to the app's active lifetime only. It also
+    // stops the animation from consuming frames while the screen is off.
+    const sub = AppState.addEventListener('change', (status) => {
+      if (status === 'active') startLoop();
+      else cancelAnimation(phase);
+    });
+
+    return () => {
+      sub.remove();
+      cancelAnimation(phase);
+    };
+  }, [phase, reduceMotion]);
 
   return (
     <View style={styles.root} pointerEvents="none">

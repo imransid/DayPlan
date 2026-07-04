@@ -9,6 +9,7 @@ import { UsersModule } from "./users/users.module";
 import { TasksModule } from "./tasks/tasks.module";
 import { DiscordModule } from "./discord/discord.module";
 import { SchedulerModule } from "./scheduler/scheduler.module";
+import { HealthController } from "./common/health.controller";
 
 @Module({
   imports: [
@@ -22,5 +23,6 @@ import { SchedulerModule } from "./scheduler/scheduler.module";
     DiscordModule,
     SchedulerModule,
   ],
+  controllers: [HealthController],
 })
 export class AppModule {}

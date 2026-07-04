@@ -79,7 +79,15 @@ function ImageAttachment({ uri, attachment }: { uri: string; attachment: NoteAtt
   return (
     <>
       <Pressable onPress={() => setZoomed(true)} style={[styles.mediaBox, { aspectRatio: ratio }]}>
-        <Image source={{ uri }} style={StyleSheet.absoluteFill} resizeMode="cover" />
+        <Image
+          source={{ uri }}
+          style={StyleSheet.absoluteFill}
+          resizeMode="cover"
+          // Downsample during decode (Android) instead of loading the full-res
+          // bitmap into memory — a large photo decoded at full size into this
+          // small thumbnail box can OOM-crash on low-RAM devices.
+          resizeMethod="resize"
+        />
       </Pressable>
 
       <Modal
@@ -90,7 +98,12 @@ function ImageAttachment({ uri, attachment }: { uri: string; attachment: NoteAtt
         onRequestClose={() => setZoomed(false)}
       >
         <Pressable style={styles.viewerBackdrop} onPress={() => setZoomed(false)}>
-          <Image source={{ uri }} style={styles.viewerImage} resizeMode="contain" />
+          <Image
+            source={{ uri }}
+            style={styles.viewerImage}
+            resizeMode="contain"
+            resizeMethod="resize"
+          />
         </Pressable>
       </Modal>
     </>

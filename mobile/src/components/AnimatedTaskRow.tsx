@@ -15,8 +15,10 @@ import type { Task } from '../types';
 
 interface Props {
   task: Task;
-  onToggle: () => void;
-  onLongPress?: () => void;
+  /** Receives the task id so the parent can pass a single stable handler
+   *  (keeps this row memoizable — no new closure per render). */
+  onToggle: (id: string) => void;
+  onLongPress?: (id: string) => void;
 }
 
 /**
@@ -29,7 +31,7 @@ interface Props {
  *   3. The strike is a real animated View (not textDecorationLine) so the
  *      line "draws" through the title rather than popping on/off.
  */
-export function AnimatedTaskRow({ task, onToggle, onLongPress }: Props) {
+function AnimatedTaskRowBase({ task, onToggle, onLongPress }: Props) {
   const isDone = !!task.doneAt;
 
   const done = useSharedValue(isDone ? 1 : 0);
@@ -45,7 +47,7 @@ export function AnimatedTaskRow({ task, onToggle, onLongPress }: Props) {
       withTiming(0.72, { duration: 110, easing: motion.easeOut }),
       withSpring(1, motion.springBounce),
     );
-    onToggle();
+    onToggle(task.id);
   };
 
   // Whole-row container: press scale + colour wash toward soft accent
@@ -102,7 +104,7 @@ export function AnimatedTaskRow({ task, onToggle, onLongPress }: Props) {
   return (
     <Pressable
       onPress={handlePress}
-      onLongPress={onLongPress}
+      onLongPress={onLongPress ? () => onLongPress(task.id) : undefined}
       onPressIn={() => {
         press.value = withTiming(1, { duration: 80 });
       }}
@@ -127,6 +129,14 @@ export function AnimatedTaskRow({ task, onToggle, onLongPress }: Props) {
     </Pressable>
   );
 }
+
+/**
+ * Memoized so toggling/deleting one task doesn't re-run the five
+ * useAnimatedStyle worklets for every other row. Effective because the parent
+ * now passes stable id-based handlers and RTK Query returns the same task
+ * object reference for unchanged rows.
+ */
+export const AnimatedTaskRow = React.memo(AnimatedTaskRowBase);
 
 const styles = StyleSheet.create({
   row: {

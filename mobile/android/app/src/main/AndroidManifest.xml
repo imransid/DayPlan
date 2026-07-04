@@ -7,6 +7,9 @@
     <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <uses-permission android:name="android.permission.VIBRATE" />
+    <!-- In-app updater: download the new APK from GitHub Releases and launch the
+         system installer (user grants "install unknown apps" once). -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
 
     <application
       android:name=".MainApplication"
@@ -15,7 +18,10 @@
       android:roundIcon="@mipmap/ic_launcher_round"
       android:allowBackup="false"
       android:theme="@style/AppTheme"
-      android:supportsRtl="true">
+      android:supportsRtl="true"
+      android:largeHeap="true"><!-- larger Dalvik heap so decoding a
+      user-attached photo into note thumbnails/viewer doesn't OOM-crash on
+      low-RAM devices -->
       <activity
         android:name=".MainActivity"
         android:label="@string/app_name"

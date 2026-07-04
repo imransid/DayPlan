@@ -1,5 +1,5 @@
-import { useCallback, useState } from 'react';
-import { Alert } from 'react-native';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { Alert, AppState } from 'react-native';
 import { launchImageLibrary } from 'react-native-image-picker';
 import DocumentPicker, { types as DocTypes } from 'react-native-document-picker';
 
@@ -36,14 +36,42 @@ function deriveExt(name: string | undefined, mime: string): string {
  */
 export function useAttachmentPicker() {
   const [isBusy, setIsBusy] = useState(false);
+  // True while a native picker is open (the app is backgrounded to it).
+  const pendingRef = useRef(false);
+
+  const setBusy = useCallback((next: boolean) => {
+    pendingRef.current = next;
+    setIsBusy(next);
+  }, []);
+
+  // Stuck-loader recovery. When a picker is open the OS may (under memory
+  // pressure, or with "Don't keep activities" on) destroy and recreate our
+  // Activity. react-native-image-picker's onActivityResult then early-returns
+  // because its callback was lost, so the awaited promise NEVER resolves and
+  // the UI is stuck showing a spinner with the buttons disabled forever.
+  // On return to the foreground, give the normal result a beat to land, then
+  // clear the orphaned busy flag so the attach buttons re-enable.
+  useEffect(() => {
+    const sub = AppState.addEventListener('change', (status) => {
+      if (status === 'active' && pendingRef.current) {
+        setTimeout(() => {
+          if (pendingRef.current) setBusy(false);
+        }, 1200);
+      }
+    });
+    return () => sub.remove();
+  }, [setBusy]);
 
   const pickMedia = useCallback(async (): Promise<NoteAttachment | null> => {
-    setIsBusy(true);
+    setBusy(true);
     try {
       const res = await launchImageLibrary({
         mediaType: 'mixed', // images AND videos
         selectionLimit: 1,
-        includeExtra: true,
+        // includeExtra only adds timestamp/id (which we don't use) and on
+        // some devices nudges the picker toward extra metadata permissions —
+        // dimensions/duration/size come back without it. Keep it off.
+        includeExtra: false,
       });
       if (res.didCancel) return null;
       if (res.errorCode) {
@@ -72,12 +100,12 @@ export function useAttachmentPicker() {
       Alert.alert('Could not attach', String(err?.message ?? err));
       return null;
     } finally {
-      setIsBusy(false);
+      setBusy(false);
     }
-  }, []);
+  }, [setBusy]);
 
   const pickFile = useCallback(async (): Promise<NoteAttachment | null> => {
-    setIsBusy(true);
+    setBusy(true);
     try {
       // `copyTo: 'cachesDirectory'` gives us a stable file:// path (fileCopyUri)
       // even on Android where the raw uri is a transient content:// handle.
@@ -104,9 +132,9 @@ export function useAttachmentPicker() {
       Alert.alert('Could not attach', String(err?.message ?? err));
       return null;
     } finally {
-      setIsBusy(false);
+      setBusy(false);
     }
-  }, []);
+  }, [setBusy]);
 
   return { pickMedia, pickFile, isBusy };
 }

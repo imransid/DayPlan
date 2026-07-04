@@ -82,8 +82,10 @@ android {
         applicationId "com.dayplan.app"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 1
-        versionName "1.0"
+        // CI passes a monotonic versionCode via -PdayplanVersionCode (github run
+        // number). Local builds fall back to 1.
+        versionCode project.hasProperty('dayplanVersionCode') ? project.property('dayplanVersionCode').toInteger() : 1
+        versionName project.hasProperty('dayplanVersionName') ? project.property('dayplanVersionName') : "1.0"
     }
     signingConfigs {
         debug {
@@ -92,15 +94,24 @@ android {
             keyAlias 'androiddebugkey'
             keyPassword 'android'
         }
+        // Real release signing — only active when the keystore props are
+        // provided (CI decodes them from GitHub secrets). Local `assembleRelease`
+        // without the props keeps using the debug key (unchanged behavior).
+        release {
+            if (project.hasProperty('DAYPLAN_UPLOAD_STORE_FILE')) {
+                storeFile file(project.property('DAYPLAN_UPLOAD_STORE_FILE'))
+                storePassword project.property('DAYPLAN_UPLOAD_STORE_PASSWORD')
+                keyAlias project.property('DAYPLAN_UPLOAD_KEY_ALIAS')
+                keyPassword project.property('DAYPLAN_UPLOAD_KEY_PASSWORD')
+            }
+        }
     }
     buildTypes {
         debug {
             signingConfig signingConfigs.debug
         }
         release {
-            // Caution! In production, you need to generate your own keystore file.
-            // see https://reactnative.dev/docs/signed-apk-android.
-            signingConfig signingConfigs.debug
+            signingConfig project.hasProperty('DAYPLAN_UPLOAD_STORE_FILE') ? signingConfigs.release : signingConfigs.debug
             minifyEnabled enableProguardInReleaseBuilds
             proguardFiles getDefaultProguardFile("proguard-android.txt"), "proguard-rules.pro"
         }
