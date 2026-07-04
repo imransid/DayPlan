@@ -115,4 +115,11 @@ export interface Note {
   /** ISO 8601 UTC instant. */
   updatedAt: string;
   attachment: NoteAttachment | null;
+  /**
+   * When true, the note is hidden behind the app-wide passcode: its content is
+   * redacted in the list and gated in the editor until unlocked this session.
+   * Optional so notes persisted before this feature (which lack the field)
+   * default to unlocked. See securitySlice + LockContext.
+   */
+  locked?: boolean;
 }

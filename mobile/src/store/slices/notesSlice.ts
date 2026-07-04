@@ -37,8 +37,21 @@ const notesSlice = createSlice({
     deleteNote(state, action: PayloadAction<string>) {
       state.items = state.items.filter((n) => n.id !== action.payload);
     },
+    /**
+     * Toggle a note's locked flag. Deliberately does NOT touch `updatedAt` —
+     * locking/unlocking is a security action, not an edit, so it shouldn't bump
+     * the "edited X ago" label users see.
+     */
+    setNoteLocked(
+      state,
+      action: PayloadAction<{ id: string; locked: boolean }>,
+    ) {
+      const note = state.items.find((n) => n.id === action.payload.id);
+      if (note) note.locked = action.payload.locked;
+    },
   },
 });
 
-export const { addNote, updateNote, deleteNote } = notesSlice.actions;
+export const { addNote, updateNote, deleteNote, setNoteLocked } =
+  notesSlice.actions;
 export default notesSlice.reducer;

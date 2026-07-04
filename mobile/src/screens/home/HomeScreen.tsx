@@ -33,6 +33,7 @@ import {
   useToggleTaskMutation,
   useDeleteTaskMutation,
   useRolloverTasksMutation,
+  useRunMyScheduledPostsMutation,
 } from '../../store/api/api';
 import { syncHourlyAlarms } from '../../services/notifications';
 import { utcTaskDayStartIso, localCalendarDateKey } from '../../utils/utcTaskDay';
@@ -49,6 +50,18 @@ export function HomeScreen() {
   const [toggleTask] = useToggleTaskMutation();
   const [deleteTask] = useDeleteTaskMutation();
   const [rolloverTasks] = useRolloverTasksMutation();
+  const [runMyScheduledPosts] = useRunMyScheduledPostsMutation();
+
+  // Nudge the backend to send any of this user's DUE scheduled Discord posts.
+  // Fire-and-forget + idempotent, so it's safe to call on cold start and every
+  // foreground. This is what makes "auto post at the set time" actually fire on
+  // a sleeping free tier: opening the app both wakes the server and triggers
+  // the due post, rather than waiting on a cron that may not be running.
+  const nudgeScheduledPosts = useCallback(() => {
+    runMyScheduledPosts()
+      .unwrap()
+      .catch(() => undefined);
+  }, [runMyScheduledPosts]);
 
   // Open the add-task sheet. AddTaskScreen owns its own createTask
   // mutation; RTK Query invalidates the "Tasks" tag on success and our
@@ -88,6 +101,7 @@ export function HomeScreen() {
       .finally(() => {
         rolloverInFlight.current = false;
       });
+    nudgeScheduledPosts();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -95,10 +109,13 @@ export function HomeScreen() {
 
   useEffect(() => {
     const sub = AppState.addEventListener('change', (state: AppStateStatus) => {
-      if (state === 'active') checkDayRollover();
+      if (state === 'active') {
+        checkDayRollover();
+        nudgeScheduledPosts();
+      }
     });
     return () => sub.remove();
-  }, [checkDayRollover]);
+  }, [checkDayRollover, nudgeScheduledPosts]);
 
   // ── Derived task stats — memoized so they aren't recomputed on every
   //    re-render that doesn't actually change `tasks`. ─────────────────
@@ -124,12 +141,19 @@ export function HomeScreen() {
     syncHourlyAlarms(pendingCount).catch(() => undefined);
   }, [pendingCount]);
 
-  const formatDate = () =>
-    DateTime.local().toLocaleString({
-      weekday: 'long',
-      month: 'long',
-      day: 'numeric',
-    });
+  // Recompute the header date only when the local calendar day actually flips
+  // (not on every render). localCalendarDateKey() is cheap and its value is
+  // stable within a day, so an app left open across midnight still updates.
+  const dayKey = localCalendarDateKey();
+  const dateLabel = useMemo(
+    () =>
+      DateTime.local().toLocaleString({
+        weekday: 'long',
+        month: 'long',
+        day: 'numeric',
+      }),
+    [dayKey],
+  );
 
   const isEmpty = !isLoading && tasks.length === 0;
 
@@ -154,7 +178,7 @@ export function HomeScreen() {
           <View style={styles.headerRow}>
             <View>
               <Text style={styles.day}>Today</Text>
-              <Text style={styles.date}>{formatDate()}</Text>
+              <Text style={styles.date}>{dateLabel}</Text>
             </View>
 
             {tasks.length > 0 && (
@@ -213,8 +237,8 @@ export function HomeScreen() {
           >
             <AnimatedTaskRow
               task={task}
-              onToggle={() => toggleTask(task.id)}
-              onLongPress={() => deleteTask(task.id)}
+              onToggle={toggleTask}
+              onLongPress={deleteTask}
             />
           </Animated.View>
         ))}

@@ -54,6 +54,21 @@ export class SchedulerController {
     return this.scheduler.runDuePosts();
   }
 
+  /**
+   * Triage endpoint (same shared-secret auth): reports whether the in-process
+   * cron is enabled and when/what the last run did. Hit this to confirm from
+   * outside that the clock is actually ticking in production — a `lastRun` that
+   * never advances means nothing is driving posting.
+   */
+  @Get("status")
+  status(
+    @Headers("authorization") auth?: string,
+    @Headers("x-cron-key") cronKey?: string,
+  ) {
+    this.assertAuthorized(auth, cronKey);
+    return this.scheduler.getStatus();
+  }
+
   private assertAuthorized(
     auth: string | undefined,
     cronKey: string | undefined,

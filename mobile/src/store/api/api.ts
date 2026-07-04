@@ -135,6 +135,22 @@ export const api = createApi({
       invalidatesTags: ["User"],
     }),
 
+    // ─── Scheduler ───────────────────────────────────────
+    /**
+     * Fire any of the current user's DUE scheduled Discord posts right now.
+     * Called when the app comes to the foreground so a post goes out the moment
+     * the user opens the app after their configured time — reliable even when
+     * the backend is a sleeping free tier whose every-minute cron isn't ticking.
+     * Idempotent per (user, kind, local-day), so calling it on every foreground
+     * never double-posts.
+     */
+    runMyScheduledPosts: builder.mutation<
+      { ranAt: string; goalPosted: number; workUpdatePosted: number },
+      void
+    >({
+      query: () => ({ url: '/scheduler/run-mine', method: 'POST' }),
+    }),
+
     // ─── Tasks ───────────────────────────────────────────
     getTasks: builder.query<Task[], string | void>({
       query: (date) => ({ url: "/tasks", params: date ? { date } : undefined }),
@@ -432,6 +448,7 @@ export const {
   useGetMeQuery,
   useUpdateProfileMutation,
   useUpdateScheduleMutation,
+  useRunMyScheduledPostsMutation,
   useGetTasksQuery,
   useGetTaskHistoryQuery,
   useCreateTaskMutation,

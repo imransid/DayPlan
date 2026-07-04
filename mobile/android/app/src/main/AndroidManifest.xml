@@ -18,7 +18,10 @@
       android:roundIcon="@mipmap/ic_launcher_round"
       android:allowBackup="false"
       android:theme="@style/AppTheme"
-      android:supportsRtl="true">
+      android:supportsRtl="true"
+      android:largeHeap="true"><!-- larger Dalvik heap so decoding a
+      user-attached photo into note thumbnails/viewer doesn't OOM-crash on
+      low-RAM devices -->
       <activity
         android:name=".MainActivity"
         android:label="@string/app_name"

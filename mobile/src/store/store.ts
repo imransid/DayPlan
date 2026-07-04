@@ -14,21 +14,24 @@ import { setupListeners } from '@reduxjs/toolkit/query';
 
 import authReducer from './slices/authSlice';
 import notesReducer from './slices/notesSlice';
+import securityReducer from './slices/securitySlice';
 import { api } from './api/api';
 import { rnFocusHandler } from './rtkAppStateFocus';
 
 const rootReducer = combineReducers({
   auth: authReducer,
   notes: notesReducer,
+  security: securityReducer,
   [api.reducerPath]: api.reducer,
 });
 
 const persistConfig = {
   key: 'dayplan-root',
   storage: AsyncStorage,
-  // `auth` (session) and `notes` (local-first notes + attachment refs) persist;
-  // the RTK Query API cache rebuilds on launch and is intentionally excluded.
-  whitelist: ['auth', 'notes'],
+  // `auth` (session), `notes` (local-first notes + attachment refs) and
+  // `security` (salted note-lock passcode hash) persist; the RTK Query API
+  // cache rebuilds on launch and is intentionally excluded.
+  whitelist: ['auth', 'notes', 'security'],
 };
 
 const persistedReducer = persistReducer(persistConfig, rootReducer);

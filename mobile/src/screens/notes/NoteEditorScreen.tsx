@@ -17,11 +17,13 @@ import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { Button, PressScale } from '../../components/UI';
 import { ChevronLeftIcon } from '../../components/Icon';
 import { AttachmentPreview } from '../../components/AttachmentPreview';
+import { PasscodeModal } from '../../components/PasscodeModal';
 import { colors, spacing, radius, fontSize, elevation } from '../../theme';
 import { useAppDispatch, useAppSelector } from '../../store/hooks';
-import { addNote, updateNote, deleteNote } from '../../store/slices/notesSlice';
+import { addNote, updateNote, deleteNote, setNoteLocked } from '../../store/slices/notesSlice';
 import { removeAttachment } from '../../services/attachmentStorage';
 import { useAttachmentPicker } from '../../hooks/useAttachmentPicker';
+import { useLock } from '../../context/LockContext';
 import type { MainStackParamList } from '../../navigation/types';
 import type { Note, NoteAttachment } from '../../types';
 
@@ -47,6 +49,23 @@ export function NoteEditorScreen() {
   const [title, setTitle] = useState(existing?.title ?? '');
   const [body, setBody] = useState(existing?.body ?? '');
   const [attachment, setAttachment] = useState<NoteAttachment | null>(existing?.attachment ?? null);
+
+  // ── Lock state ──────────────────────────────────────────────────────────
+  const { hasPasscode, isUnlocked, unlock, verifyPasscode, setPasscode } = useLock();
+  const isLocked = !!existing?.locked;
+  // A note is gated when it's locked and not unlocked in this session. New
+  // (unsaved) notes are never gated.
+  const gated = !!existing && isLocked && !isUnlocked(existing.id);
+  // Passcode modal: 'enter' to open a gated note, 'set' to create the app
+  // passcode when locking the first note.
+  const [passcodeMode, setPasscodeMode] = useState<'enter' | 'set' | null>(null);
+
+  // Auto-prompt for the passcode when arriving at (or returning to) a gated
+  // note — e.g. deep link, or the app was backgrounded and re-locked while the
+  // editor was open.
+  useEffect(() => {
+    if (gated) setPasscodeMode('enter');
+  }, [gated]);
 
   // File lifecycle: the original persisted file (if editing), and every file
   // freshly copied into the sandbox during this session. On save we keep the
@@ -125,6 +144,55 @@ export function NoteEditorScreen() {
     ]);
   };
 
+  // ── Lock/unlock controls ────────────────────────────────────────────────
+  const lockNote = () => {
+    if (!existing) return;
+    dispatch(setNoteLocked({ id: existing.id, locked: true }));
+    // Keep it viewable for the rest of this session (the user just locked it).
+    unlock(existing.id);
+  };
+
+  const onToggleLock = () => {
+    if (!existing) {
+      Alert.alert('Save first', 'Save this note before locking it.');
+      return;
+    }
+    if (isLocked) {
+      Alert.alert('Remove lock?', 'This note will no longer need a passcode to open.', [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Remove lock',
+          onPress: () => dispatch(setNoteLocked({ id: existing.id, locked: false })),
+        },
+      ]);
+      return;
+    }
+    // Locking: create the app passcode first if there isn't one yet.
+    if (hasPasscode) {
+      lockNote();
+    } else {
+      setPasscodeMode('set');
+    }
+  };
+
+  const handlePasscodeSubmit = (passcode: string): boolean => {
+    if (passcodeMode === 'set') {
+      // First-ever passcode → save it, then lock this note.
+      setPasscode(passcode);
+      if (existing) {
+        dispatch(setNoteLocked({ id: existing.id, locked: true }));
+        unlock(existing.id);
+      }
+      setPasscodeMode(null);
+      return true;
+    }
+    // 'enter' → unlock a gated note.
+    if (!existing || !verifyPasscode(passcode)) return false;
+    unlock(existing.id);
+    setPasscodeMode(null);
+    return true;
+  };
+
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
       <KeyboardAvoidingView
@@ -143,20 +211,49 @@ export function NoteEditorScreen() {
           </PressScale>
           <Text style={styles.headerTitle}>{existing ? 'Edit note' : 'New note'}</Text>
           {existing ? (
-            <PressScale
-              onPress={onDelete}
-              style={styles.iconBtn}
-              accessibilityRole="button"
-              accessibilityLabel="Delete note"
-            >
-              <View style={styles.trashLid} />
-              <View style={styles.trashBody} />
-            </PressScale>
+            <View style={styles.headerActions}>
+              <PressScale
+                onPress={onToggleLock}
+                style={styles.iconBtn}
+                accessibilityRole="button"
+                accessibilityLabel={isLocked ? 'Remove lock' : 'Lock note'}
+              >
+                <Text style={styles.lockGlyph}>{isLocked ? '🔒' : '🔓'}</Text>
+              </PressScale>
+              {!gated && (
+                <PressScale
+                  onPress={onDelete}
+                  style={styles.iconBtn}
+                  accessibilityRole="button"
+                  accessibilityLabel="Delete note"
+                >
+                  <View style={styles.trashLid} />
+                  <View style={styles.trashBody} />
+                </PressScale>
+              )}
+            </View>
           ) : (
             <View style={styles.iconBtn} />
           )}
         </View>
 
+        {gated ? (
+          <View style={styles.gatedWrap}>
+            <Text style={styles.gatedGlyph}>🔒</Text>
+            <Text style={styles.gatedTitle}>This note is locked</Text>
+            <Text style={styles.gatedSub}>
+              Enter your passcode to view and edit it.
+            </Text>
+            <Button
+              label="Unlock"
+              variant="accent"
+              fullWidth={false}
+              onPress={() => setPasscodeMode('enter')}
+              style={styles.gatedBtn}
+            />
+          </View>
+        ) : (
+          <>
         <ScrollView
           contentContainerStyle={{
             padding: spacing.lg,
@@ -214,6 +311,21 @@ export function NoteEditorScreen() {
         <View style={[styles.footer, { paddingBottom: Math.max(insets.bottom, spacing.md) }]}>
           <Button label={existing ? 'Save changes' : 'Save note'} variant="accent" disabled={!canSave} onPress={onSave} />
         </View>
+          </>
+        )}
+
+        <PasscodeModal
+          visible={passcodeMode !== null}
+          mode={passcodeMode === 'set' ? 'set' : 'enter'}
+          onClose={() => {
+            const backOut = passcodeMode === 'enter' && gated;
+            setPasscodeMode(null);
+            // Backing out of unlocking a gated note leaves the screen — there's
+            // nothing to show behind it.
+            if (backOut) navigation.goBack();
+          }}
+          onSubmit={handlePasscodeSubmit}
+        />
       </KeyboardAvoidingView>
     </SafeAreaView>
   );
@@ -235,6 +347,28 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
+  headerActions: { flexDirection: 'row', alignItems: 'center' },
+  lockGlyph: { fontSize: 18 },
+  gatedWrap: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: spacing.xl,
+  },
+  gatedGlyph: { fontSize: 44, marginBottom: spacing.md },
+  gatedTitle: {
+    fontSize: fontSize.title,
+    fontWeight: '700',
+    color: colors.textPrimary,
+  },
+  gatedSub: {
+    fontSize: fontSize.body,
+    color: colors.textMuted,
+    textAlign: 'center',
+    marginTop: 6,
+    lineHeight: 20,
+  },
+  gatedBtn: { marginTop: spacing.lg, paddingHorizontal: 32 },
   headerTitle: {
     flex: 1,
     textAlign: 'center',
