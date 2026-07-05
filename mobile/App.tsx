@@ -12,6 +12,7 @@ import { LiquidGlassBackground } from './src/components/LiquidGlassBackground';
 import { ErrorBoundary } from './src/components/ErrorBoundary';
 import { LockProvider } from './src/context/LockContext';
 import { registerAlarmActionHandler } from './src/services/notifications';
+import { registerScheduledPostHandler } from './src/services/scheduledPosts';
 import { checkForUpdate } from './src/services/appUpdate';
 
 function Loading() {
@@ -28,8 +29,15 @@ export default function App() {
   // the user is INSIDE the app when the alarm fires and taps Dismiss/Snooze
   // from the notification.
   useEffect(() => {
-    const unsubscribe = registerAlarmActionHandler();
-    return () => unsubscribe();
+    const unsubscribeAlarm = registerAlarmActionHandler();
+    // Post scheduled goal / work-update if one of their triggers fires while the
+    // app is already open (the background/headless path handles the app-closed
+    // case — see index.js).
+    const unsubscribePosts = registerScheduledPostHandler();
+    return () => {
+      unsubscribeAlarm();
+      unsubscribePosts();
+    };
   }, []);
 
   // Silent auto-update check on launch: if CI has published a newer build to

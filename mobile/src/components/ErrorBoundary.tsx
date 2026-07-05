@@ -5,6 +5,13 @@ import { colors, spacing, radius, fontSize } from '../theme';
 
 interface Props {
   children: React.ReactNode;
+  /**
+   * Optional compact replacement shown instead of the full-screen recovery
+   * UI. Use when boundary-wrapping a small subtree (e.g. a media preview) so a
+   * localized render crash degrades to a placeholder rather than taking over
+   * the whole screen.
+   */
+  fallback?: React.ReactNode;
 }
 
 interface State {
@@ -44,6 +51,7 @@ export class ErrorBoundary extends React.Component<Props, State> {
   render() {
     const { error } = this.state;
     if (!error) return this.props.children;
+    if (this.props.fallback !== undefined) return this.props.fallback;
 
     return (
       <View style={styles.root}>
