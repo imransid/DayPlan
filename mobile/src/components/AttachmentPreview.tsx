@@ -71,10 +71,22 @@ export function AttachmentPreview({
 
 function ImageAttachment({ uri, attachment }: { uri: string; attachment: NoteAttachment }) {
   const [zoomed, setZoomed] = useState(false);
+  const [failed, setFailed] = useState(false);
   const ratio =
     attachment.width && attachment.height
       ? clamp(attachment.width / attachment.height, 0.6, 2)
       : 4 / 3;
+
+  // If the decode fails (missing/corrupt file, or a picker copy that landed
+  // as a 0-byte file when the OS recreated the Activity mid-pick), show a
+  // graceful placeholder instead of a broken image surface.
+  if (failed) {
+    return (
+      <View style={[styles.mediaBox, styles.mediaError, { aspectRatio: ratio }]}>
+        <Text style={styles.imageErrorText}>Couldn’t load this image</Text>
+      </View>
+    );
+  }
 
   return (
     <>
@@ -87,6 +99,7 @@ function ImageAttachment({ uri, attachment }: { uri: string; attachment: NoteAtt
           // bitmap into memory — a large photo decoded at full size into this
           // small thumbnail box can OOM-crash on low-RAM devices.
           resizeMethod="resize"
+          onError={() => setFailed(true)}
         />
       </Pressable>
 
@@ -103,6 +116,10 @@ function ImageAttachment({ uri, attachment }: { uri: string; attachment: NoteAtt
             style={styles.viewerImage}
             resizeMode="contain"
             resizeMethod="resize"
+            onError={() => {
+              setZoomed(false);
+              setFailed(true);
+            }}
           />
         </Pressable>
       </Modal>
@@ -185,6 +202,7 @@ const styles = StyleSheet.create({
   },
   mediaError: { alignItems: 'center', justifyContent: 'center' },
   mediaErrorText: { color: '#fff', fontSize: fontSize.small, fontWeight: '600' },
+  imageErrorText: { color: colors.textMuted, fontSize: fontSize.small, fontWeight: '600' },
   // ── File chip ──
   chip: {
     ...glass.cardSoft,

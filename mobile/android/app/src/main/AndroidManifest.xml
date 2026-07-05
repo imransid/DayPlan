@@ -2,9 +2,14 @@
 
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- Exact hourly alarms. USE_EXACT_ALARM is auto-granted to alarm-style
+         apps on Android 13/14; SCHEDULE_EXACT_ALARM is the fallback path. -->
     <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
     <uses-permission android:name="android.permission.USE_EXACT_ALARM" />
-    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
+    <!-- Lets the alarm present a full-screen ringer over the lock screen
+         (notifee fullScreenAction). Required from Android 14 (targetSdk 34)
+         for fullScreenAction to actually surface as a system-alarm UI. -->
+    <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <uses-permission android:name="android.permission.VIBRATE" />
     <!-- In-app updater: download the new APK from GitHub Releases and launch the

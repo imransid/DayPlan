@@ -39,6 +39,13 @@ import {
   syncHourlyAlarms,
   requestPermissions,
 } from '../../services/notifications';
+import {
+  loadAutoPostConfig,
+  saveAutoPostConfig,
+  syncAutoPosts,
+  scheduleAutoPosts,
+  type AutoPostConfig,
+} from '../../services/scheduledPosts';
 import { utcTaskDayStartIso } from '../../utils/utcTaskDay';
 import type { MainStackParamList } from '../../navigation/types';
 
@@ -71,13 +78,27 @@ export function SettingsScreen({ navigation }: Props) {
   const [editing, setEditing] = useState<EditingField>(null);
   const [alarm, setAlarm] = useState<AlarmConfig>({ enabled: false });
   const [alarmLoaded, setAlarmLoaded] = useState(false);
+  const [autoPost, setAutoPost] = useState<AutoPostConfig>({ enabled: false });
+  const [autoPostLoaded, setAutoPostLoaded] = useState(false);
 
   useEffect(() => {
     loadAlarmConfig().then((cfg) => {
       setAlarm(cfg);
       setAlarmLoaded(true);
     });
+    loadAutoPostConfig().then((cfg) => {
+      setAutoPost(cfg);
+      setAutoPostLoaded(true);
+    });
   }, []);
+
+  // Keep the OS-held daily post triggers aligned with the user's current times
+  // while auto-post is on (times arrive from getMe after mount, and can change).
+  useEffect(() => {
+    if (autoPostLoaded && autoPost.enabled) {
+      scheduleAutoPosts(goalPostTime, workUpdateTime).catch(() => undefined);
+    }
+  }, [autoPostLoaded, autoPost.enabled, goalPostTime, workUpdateTime]);
 
   const handleLogout = () => {
     Alert.alert('Sign out', 'Are you sure?', [
@@ -149,6 +170,38 @@ export function SettingsScreen({ navigation }: Props) {
     [pendingCount],
   );
 
+  /**
+   * Toggle phone-driven auto-posting. When ON, the OS fires a trigger at the
+   * goal/work-update time — even with the app closed — and a short background
+   * task posts to Discord (Android). Needs notification permission to schedule.
+   */
+  const handleToggleAutoPost = useCallback(
+    async (enabled: boolean) => {
+      if (enabled) {
+        const granted = await requestPermissions();
+        if (!granted) {
+          Alert.alert(
+            'Notifications disabled',
+            "Turn on notifications for DayPlan in your phone's settings, then try again.",
+          );
+          setAutoPost((prev) => ({ ...prev }));
+          return;
+        }
+      }
+
+      const next: AutoPostConfig = { enabled };
+      setAutoPost(next);
+      await saveAutoPostConfig(next);
+
+      try {
+        await syncAutoPosts(goalPostTime, workUpdateTime);
+      } catch (err: any) {
+        Alert.alert('Could not update auto-post', err?.message ?? 'Try again');
+      }
+    },
+    [goalPostTime, workUpdateTime],
+  );
+
   const handleTestPublish = async (kind: 'goal' | 'work_update') => {
     try {
       const result = await testPublish({ kind }).unwrap();
@@ -197,6 +250,14 @@ export function SettingsScreen({ navigation }: Props) {
     Platform.OS === 'ios'
       ? 'Rings every hour, 11 AM – 11 PM, with your remaining tasks. iOS plays sound once per fire (~30s).'
       : 'Rings every hour, 11 AM – 11 PM, with your remaining tasks. Works even if the app is closed.';
+
+  // Subtitle under the auto-post toggle. Android fires a background task at the
+  // set time even when the app is closed; iOS can only remind (Apple won't run
+  // app code on notification delivery while the app is fully quit).
+  const autoPostSub =
+    Platform.OS === 'ios'
+      ? 'Reminds you at each time — tap the notification to send. iOS can’t post while the app is fully closed.'
+      : 'Posts at your goal & work-update times automatically, even when the app is closed.';
 
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
@@ -280,6 +341,23 @@ export function SettingsScreen({ navigation }: Props) {
               value={formatTime(workUpdateTime)}
               onPress={() => setEditing('workUpdateTime')}
             />
+            <View style={[styles.row, styles.rowBorder]}>
+              <View style={styles.rowMain}>
+                <Text style={styles.rowLabel}>Auto-post at these times</Text>
+                <Text style={styles.rowSub}>{autoPostSub}</Text>
+              </View>
+              {autoPostLoaded ? (
+                <Switch
+                  value={autoPost.enabled}
+                  onValueChange={handleToggleAutoPost}
+                  trackColor={{ false: 'rgba(0,0,0,0.1)', true: colors.discord }}
+                  thumbColor={Platform.OS === 'android' ? '#fff' : undefined}
+                  ios_backgroundColor="rgba(0,0,0,0.1)"
+                />
+              ) : (
+                <ActivityIndicator size="small" color={colors.textMuted} />
+              )}
+            </View>
             <SettingsRow
               label="Send goal post now"
               sub="Manually publish to verify Discord delivery"

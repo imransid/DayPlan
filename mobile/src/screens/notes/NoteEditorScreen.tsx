@@ -17,6 +17,7 @@ import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { Button, PressScale } from '../../components/UI';
 import { ChevronLeftIcon } from '../../components/Icon';
 import { AttachmentPreview } from '../../components/AttachmentPreview';
+import { ErrorBoundary } from '../../components/ErrorBoundary';
 import { PasscodeModal } from '../../components/PasscodeModal';
 import { colors, spacing, radius, fontSize, elevation } from '../../theme';
 import { useAppDispatch, useAppSelector } from '../../store/hooks';
@@ -59,6 +60,11 @@ export function NoteEditorScreen() {
   // Passcode modal: 'enter' to open a gated note, 'set' to create the app
   // passcode when locking the first note.
   const [passcodeMode, setPasscodeMode] = useState<'enter' | 'set' | null>(null);
+  // A brand-new (unsaved) note has no id to lock yet, so we record the INTENT
+  // to lock and apply it on save. For an existing note the source of truth is
+  // the persisted `locked` flag.
+  const [pendingLock, setPendingLock] = useState(false);
+  const showLocked = existing ? isLocked : pendingLock;
 
   // Auto-prompt for the passcode when arriving at (or returning to) a gated
   // note — e.g. deep link, or the app was backgrounded and re-locked while the
@@ -111,15 +117,19 @@ export function NoteEditorScreen() {
       dispatch(updateNote({ id: existing.id, changes: { title, body, attachment } }));
     } else {
       const now = new Date().toISOString();
+      const id = newId();
       const note: Note = {
-        id: newId(),
+        id,
         title,
         body,
         createdAt: now,
         updatedAt: now,
         attachment,
+        locked: pendingLock,
       };
       dispatch(addNote(note));
+      // Keep it viewable this session for the user who just created it.
+      if (pendingLock) unlock(id);
     }
     navigation.goBack();
   };
@@ -154,7 +164,17 @@ export function NoteEditorScreen() {
 
   const onToggleLock = () => {
     if (!existing) {
-      Alert.alert('Save first', 'Save this note before locking it.');
+      // New note: toggle the intent to lock. It's applied when the note is
+      // saved. Creating the app passcode first if there isn't one yet.
+      if (pendingLock) {
+        setPendingLock(false);
+        return;
+      }
+      if (hasPasscode) {
+        setPendingLock(true);
+      } else {
+        setPasscodeMode('set');
+      }
       return;
     }
     if (isLocked) {
@@ -177,11 +197,14 @@ export function NoteEditorScreen() {
 
   const handlePasscodeSubmit = (passcode: string): boolean => {
     if (passcodeMode === 'set') {
-      // First-ever passcode → save it, then lock this note.
+      // First-ever passcode → save it, then lock this note (existing) or record
+      // the intent to lock it on save (new).
       setPasscode(passcode);
       if (existing) {
         dispatch(setNoteLocked({ id: existing.id, locked: true }));
         unlock(existing.id);
+      } else {
+        setPendingLock(true);
       }
       setPasscodeMode(null);
       return true;
@@ -210,17 +233,26 @@ export function NoteEditorScreen() {
             <ChevronLeftIcon size={22} color={colors.textPrimary} />
           </PressScale>
           <Text style={styles.headerTitle}>{existing ? 'Edit note' : 'New note'}</Text>
-          {existing ? (
+          {gated ? (
+            // While a locked note is still gated, the passcode prompt is the
+            // only affordance — hide the lock/delete controls so the lock
+            // can't be removed without first unlocking.
+            <View style={styles.iconBtn} />
+          ) : (
+            // Lock control shows for BOTH new and existing notes so a password
+            // can be set the moment you create a note — not only after saving,
+            // leaving, and reopening it. Labelled so it isn't a bare emoji.
             <View style={styles.headerActions}>
               <PressScale
                 onPress={onToggleLock}
-                style={styles.iconBtn}
+                style={styles.lockBtn}
                 accessibilityRole="button"
-                accessibilityLabel={isLocked ? 'Remove lock' : 'Lock note'}
+                accessibilityLabel={showLocked ? 'Remove lock' : 'Lock note'}
               >
-                <Text style={styles.lockGlyph}>{isLocked ? '🔒' : '🔓'}</Text>
+                <Text style={styles.lockGlyph}>{showLocked ? '🔒' : '🔓'}</Text>
+                <Text style={styles.lockBtnLabel}>{showLocked ? 'Locked' : 'Lock'}</Text>
               </PressScale>
-              {!gated && (
+              {existing && (
                 <PressScale
                   onPress={onDelete}
                   style={styles.iconBtn}
@@ -232,8 +264,6 @@ export function NoteEditorScreen() {
                 </PressScale>
               )}
             </View>
-          ) : (
-            <View style={styles.iconBtn} />
           )}
         </View>
 
@@ -283,7 +313,24 @@ export function NoteEditorScreen() {
 
           {attachment ? (
             <View style={{ marginTop: spacing.lg }}>
-              <AttachmentPreview attachment={attachment} onRemove={() => setAttachment(null)} />
+              {/* Contain any render-time crash in the media subtree (Image /
+                  Video / Modal) so a bad attachment degrades to a placeholder
+                  instead of tearing down the whole editor. */}
+              <ErrorBoundary
+                fallback={
+                  <View style={styles.attachError}>
+                    <Text style={styles.attachErrorText}>Couldn’t preview this attachment</Text>
+                    <Button
+                      label="Remove"
+                      variant="outline"
+                      fullWidth={false}
+                      onPress={() => setAttachment(null)}
+                    />
+                  </View>
+                }
+              >
+                <AttachmentPreview attachment={attachment} onRemove={() => setAttachment(null)} />
+              </ErrorBoundary>
             </View>
           ) : (
             <View style={styles.attachRow}>
@@ -348,6 +395,15 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   headerActions: { flexDirection: 'row', alignItems: 'center' },
+  lockBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    height: 40,
+    paddingHorizontal: 10,
+    borderRadius: radius.pill,
+  },
+  lockBtnLabel: { fontSize: fontSize.caption, fontWeight: '700', color: colors.textSecondary },
   lockGlyph: { fontSize: 18 },
   gatedWrap: {
     flex: 1,
@@ -392,6 +448,16 @@ const styles = StyleSheet.create({
   },
   attachRow: { flexDirection: 'row', gap: spacing.md, marginTop: spacing.lg },
   attachBtn: { flex: 1 },
+  attachError: {
+    alignItems: 'center',
+    gap: spacing.md,
+    padding: spacing.lg,
+    borderRadius: radius.lg,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: colors.border,
+    backgroundColor: colors.surfaceAlt,
+  },
+  attachErrorText: { fontSize: fontSize.body, color: colors.textMuted, fontWeight: '600' },
   footer: {
     paddingHorizontal: spacing.lg,
     paddingTop: spacing.md,
