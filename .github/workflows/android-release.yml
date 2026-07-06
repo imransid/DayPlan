@@ -21,8 +21,13 @@ on:
 permissions:
   contents: write # create the Release
 
+# Per-ref concurrency so builds on different tags/branches DON'T cancel each
+# other. With a single shared group, GitHub keeps only one *pending* run per
+# group and a newer pending run cancels the older one — so rapid successive
+# `ci-*` tag pushes silently cancelled each other and never published. Scoping
+# the group to github.ref lets every tag/branch build independently.
 concurrency:
-  group: android-release
+  group: android-release-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
