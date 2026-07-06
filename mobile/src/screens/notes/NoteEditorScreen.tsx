@@ -18,6 +18,7 @@ import { Button, PressScale } from '../../components/UI';
 import { ChevronLeftIcon, PlusIcon } from '../../components/Icon';
 import { AttachmentPreview } from '../../components/AttachmentPreview';
 import { MarkdownText } from '../../components/MarkdownText';
+import { SpreadsheetEditor } from '../../components/SpreadsheetEditor';
 import { ErrorBoundary } from '../../components/ErrorBoundary';
 import { PasscodeModal } from '../../components/PasscodeModal';
 import { AppModal } from '../../components/AppModal';
@@ -60,6 +61,7 @@ export function NoteEditorScreen() {
   const [body, setBody] = useState(existing?.body ?? '');
   const [attachment, setAttachment] = useState<NoteAttachment | null>(existing?.attachment ?? null);
   const [checklist, setChecklist] = useState<ChecklistItem[]>(existing?.checklist ?? []);
+  const [sheet, setSheet] = useState<string[][] | null>(existing?.sheet ?? null);
   // Bottom sheets: "+ Add" (media/checklist) and the ⋮ overflow (pin/lock/delete).
   const [addSheet, setAddSheet] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
@@ -138,11 +140,15 @@ export function NoteEditorScreen() {
     setChecklist((l) => l.filter((c) => c.id !== id));
 
   const cleanedChecklist = checklist.filter((c) => c.text.trim().length > 0);
+  // Keep the sheet only if any cell has content.
+  const cleanedSheet =
+    sheet && sheet.some((row) => row.some((cell) => cell.trim().length > 0)) ? sheet : null;
   const canSave =
     title.trim().length > 0 ||
     body.trim().length > 0 ||
     attachment !== null ||
-    cleanedChecklist.length > 0;
+    cleanedChecklist.length > 0 ||
+    cleanedSheet !== null;
 
   // ── Undo / redo (title + body text history) ───────────────────────────────
   // A debounced snapshot stack: typing coalesces into word-level steps, undo/
@@ -266,7 +272,13 @@ export function NoteEditorScreen() {
       dispatch(
         updateNote({
           id: existing.id,
-          changes: { title, body, attachment, checklist: cleanedChecklist },
+          changes: {
+            title,
+            body,
+            attachment,
+            checklist: cleanedChecklist,
+            sheet: cleanedSheet ?? undefined,
+          },
         }),
       );
     } else {
@@ -282,6 +294,7 @@ export function NoteEditorScreen() {
         updatedAt: now,
         attachment,
         checklist: cleanedChecklist,
+        sheet: cleanedSheet ?? undefined,
         locked: pendingLock,
         notebookId: route.params?.notebookId ?? DEFAULT_NOTEBOOK_ID,
       };
@@ -590,6 +603,10 @@ export function NoteEditorScreen() {
             </View>
           )}
 
+          {sheet && (
+            <SpreadsheetEditor value={sheet} onChange={setSheet} onRemove={() => setSheet(null)} />
+          )}
+
           <Pressable
             onPress={() => setAddSheet(true)}
             style={styles.addRow}
@@ -646,6 +663,20 @@ export function NoteEditorScreen() {
               onPress={() => {
                 setAddSheet(false);
                 if (checklist.length === 0) addChecklistItem();
+              }}
+            />
+            <AddTile
+              emoji="📊"
+              label="Sheet"
+              onPress={() => {
+                setAddSheet(false);
+                if (!sheet) {
+                  setSheet([
+                    ['', '', ''],
+                    ['', '', ''],
+                    ['', '', ''],
+                  ]);
+                }
               }}
             />
             <AddTile

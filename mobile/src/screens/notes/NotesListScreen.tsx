@@ -606,6 +606,7 @@ const NoteCard = React.memo(function NoteCard({
                 ☑ {note.checklist.filter((c) => c.done).length}/{note.checklist.length}
               </Text>
             )}
+            {note.sheet && note.sheet.length > 0 && <Text style={styles.cardMeta}>▦</Text>}
             <Text style={styles.cardMeta}>{date}</Text>
           </View>
         </>

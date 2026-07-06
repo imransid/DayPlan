@@ -119,6 +119,8 @@ export interface Note {
   body: string;
   /** Optional checklist (the reference app's checkbox feature). */
   checklist?: ChecklistItem[];
+  /** Optional spreadsheet: rows of cell strings. */
+  sheet?: string[][];
   /** ISO 8601 UTC instant. */
   createdAt: string;
   /** ISO 8601 UTC instant. */
