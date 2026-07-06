@@ -17,6 +17,7 @@ import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { Button, PressScale } from '../../components/UI';
 import { ChevronLeftIcon, PlusIcon } from '../../components/Icon';
 import { AttachmentPreview } from '../../components/AttachmentPreview';
+import { MarkdownText } from '../../components/MarkdownText';
 import { ErrorBoundary } from '../../components/ErrorBoundary';
 import { PasscodeModal } from '../../components/PasscodeModal';
 import { AppModal } from '../../components/AppModal';
@@ -219,6 +220,28 @@ export function NoteEditorScreen() {
     if (histIndex.current < history.current.length - 1) {
       applySnapshot(histIndex.current + 1);
     }
+  };
+
+  // ── Rich text (markdown) ──────────────────────────────────────────────────
+  // The "Aa" toolbar writes markdown into the plain-text body; a preview toggle
+  // renders it via MarkdownText. Keeping the body as plain markdown means
+  // search / checklist / card previews are unaffected.
+  const bodyRef = useRef<TextInput>(null);
+  const bodySel = useRef({ start: 0, end: 0 });
+  const [previewMode, setPreviewMode] = useState(false);
+
+  const applyWrap = (marker: string) => {
+    const s = Math.min(bodySel.current.start, body.length);
+    const e = Math.min(bodySel.current.end, body.length);
+    const sel = body.slice(s, e) || 'text';
+    handleBodyChange(`${body.slice(0, s)}${marker}${sel}${marker}${body.slice(e)}`);
+    requestAnimationFrame(() => bodyRef.current?.focus());
+  };
+  const applyLinePrefix = (prefix: string) => {
+    const s = Math.min(bodySel.current.start, body.length);
+    const lineStart = body.lastIndexOf('\n', s - 1) + 1;
+    handleBodyChange(`${body.slice(0, lineStart)}${prefix}${body.slice(lineStart)}`);
+    requestAnimationFrame(() => bodyRef.current?.focus());
   };
 
   const onSave = async () => {
@@ -461,15 +484,54 @@ export function NoteEditorScreen() {
             maxLength={120}
           />
 
-          <TextInput
-            value={body}
-            onChangeText={handleBodyChange}
-            placeholder="Write your note…"
-            placeholderTextColor={colors.textMuted}
-            style={styles.bodyInput}
-            multiline
-            textAlignVertical="top"
-          />
+          {previewMode ? (
+            <Pressable
+              onPress={() => setPreviewMode(false)}
+              style={styles.previewBox}
+              accessibilityLabel="Edit note"
+            >
+              {body.trim() ? (
+                <MarkdownText text={body} />
+              ) : (
+                <Text style={styles.previewEmpty}>Nothing to preview — tap to edit.</Text>
+              )}
+            </Pressable>
+          ) : (
+            <>
+              <TextInput
+                ref={bodyRef}
+                value={body}
+                onChangeText={handleBodyChange}
+                onSelectionChange={(e) => {
+                  bodySel.current = e.nativeEvent.selection;
+                }}
+                placeholder="Write your note…"
+                placeholderTextColor={colors.textMuted}
+                style={styles.bodyInput}
+                multiline
+                textAlignVertical="top"
+              />
+              {/* "Aa" formatting toolbar — writes markdown into the body. */}
+              <View style={styles.fmtBar}>
+                <Pressable onPress={() => setPreviewMode(true)} style={styles.fmtBtn}>
+                  <Text style={styles.fmtPreview}>Aa Preview</Text>
+                </Pressable>
+                <View style={styles.fmtSpacer} />
+                <Pressable onPress={() => applyWrap('**')} style={styles.fmtBtn}>
+                  <Text style={[styles.fmtGlyph, { fontWeight: '800' }]}>B</Text>
+                </Pressable>
+                <Pressable onPress={() => applyWrap('_')} style={styles.fmtBtn}>
+                  <Text style={[styles.fmtGlyph, { fontStyle: 'italic' }]}>I</Text>
+                </Pressable>
+                <Pressable onPress={() => applyLinePrefix('# ')} style={styles.fmtBtn}>
+                  <Text style={styles.fmtGlyph}>H</Text>
+                </Pressable>
+                <Pressable onPress={() => applyLinePrefix('- ')} style={styles.fmtBtn}>
+                  <Text style={styles.fmtGlyph}>•</Text>
+                </Pressable>
+              </View>
+            </>
+          )}
 
           {attachment && (
             <View style={{ marginTop: spacing.lg }}>
@@ -848,6 +910,29 @@ const styles = StyleSheet.create({
     minHeight: 160,
     paddingVertical: spacing.sm,
   },
+  // ── Rich-text (markdown) toolbar + preview ──
+  fmtBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.xs,
+    marginTop: spacing.sm,
+    paddingTop: spacing.sm,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: colors.border,
+  },
+  fmtSpacer: { flex: 1 },
+  fmtBtn: {
+    minWidth: 34,
+    height: 34,
+    paddingHorizontal: 8,
+    borderRadius: radius.sm,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  fmtGlyph: { fontSize: 17, color: colors.textPrimary },
+  fmtPreview: { fontSize: fontSize.small, fontWeight: '700', color: colors.accent },
+  previewBox: { minHeight: 180, paddingVertical: spacing.sm },
+  previewEmpty: { fontSize: fontSize.body, color: colors.textMuted },
   attachRow: { flexDirection: 'row', gap: spacing.md, marginTop: spacing.lg },
   attachBtn: { flex: 1 },
   attachError: {

@@ -18,6 +18,7 @@ import { DateTime } from 'luxon';
 import { PressScale } from '../../components/UI';
 import { PlusIcon, SearchIcon } from '../../components/Icon';
 import { PasscodeModal } from '../../components/PasscodeModal';
+import { stripMarkdown } from '../../components/MarkdownText';
 import { NotebooksSheet } from './NotebooksSheet';
 import { colors, spacing, radius, motion, elevation, fontSize } from '../../theme';
 import { useAppSelector, useAppDispatch } from '../../store/hooks';
@@ -579,7 +580,7 @@ const NoteCard = React.memo(function NoteCard({
               style={[styles.cardBody, !note.title.trim() && { color: colors.textPrimary }]}
               numberOfLines={variant === 'grid' ? 6 : 1}
             >
-              {note.body.trim()}
+              {stripMarkdown(note.body).trim()}
             </Text>
           )}
           {!note.body.trim() && note.checklist && note.checklist.length > 0 && (
