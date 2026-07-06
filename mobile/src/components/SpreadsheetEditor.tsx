@@ -1,5 +1,5 @@
 import React from 'react';
-import { View, Text, StyleSheet, Pressable, TextInput, ScrollView } from 'react-native';
+import { View, Text, StyleSheet, Pressable, TextInput, ScrollView, Keyboard } from 'react-native';
 import { colors, spacing, radius, fontSize } from '../theme';
 
 /**
@@ -23,8 +23,19 @@ export function SpreadsheetEditor({
     onChange(value.map((row, ri) => (ri === r ? row.map((cell, ci) => (ci === c ? v : cell)) : row)));
   const addRow = () => onChange([...value, Array(cols || 1).fill('')]);
   const addCol = () => onChange(value.map((row) => [...row, '']));
-  const deleteRow = (r: number) => rows > 1 && onChange(value.filter((_, ri) => ri !== r));
-  const deleteCol = (c: number) => cols > 1 && onChange(value.map((row) => row.filter((_, ci) => ci !== c)));
+  // Dismiss the keyboard before a structural delete: cells are keyed by
+  // position (the model is a bare string[][]), so a focused input would jump to
+  // a different cell when rows/cols shift underneath it.
+  const deleteRow = (r: number) => {
+    if (rows <= 1) return;
+    Keyboard.dismiss();
+    onChange(value.filter((_, ri) => ri !== r));
+  };
+  const deleteCol = (c: number) => {
+    if (cols <= 1) return;
+    Keyboard.dismiss();
+    onChange(value.map((row) => row.filter((_, ci) => ci !== c)));
+  };
 
   return (
     <View style={styles.wrap}>

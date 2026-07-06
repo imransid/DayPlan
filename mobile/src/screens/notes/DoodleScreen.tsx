@@ -1,4 +1,4 @@
-import React, { useRef, useState } from 'react';
+import React, { useMemo, useRef, useState } from 'react';
 import {
   View,
   Text,
@@ -49,11 +49,23 @@ export function DoodleScreen() {
   const [width, setWidth] = useState(WIDTHS[1]);
   const [saving, setSaving] = useState(false);
   const size = useRef({ w: 0, h: 0 });
+  // Set when the user backs out mid-save, so the awaited capture doesn't then
+  // navigate a phantom result onto the (already popped) editor.
+  const cancelledRef = useRef(false);
 
   // Refs so the once-created PanResponder reads the LATEST style/points.
   const currentRef = useRef('');
   const colorRef = useRef(color);
   const widthRef = useRef(width);
+
+  const commitStroke = () => {
+    const d = currentRef.current;
+    currentRef.current = '';
+    setCurrent('');
+    if (d.includes('L')) {
+      setPaths((p) => [...p, { d, color: colorRef.current, width: widthRef.current }]);
+    }
+  };
 
   const pickColor = (c: string) => {
     setColor(c);
@@ -78,14 +90,11 @@ export function DoodleScreen() {
         currentRef.current += ` L${locationX.toFixed(1)},${locationY.toFixed(1)}`;
         setCurrent(currentRef.current);
       },
-      onPanResponderRelease: () => {
-        const d = currentRef.current;
-        currentRef.current = '';
-        setCurrent('');
-        if (d.includes('L')) {
-          setPaths((p) => [...p, { d, color: colorRef.current, width: widthRef.current }]);
-        }
-      },
+      // Don't yield an in-progress stroke to a parent responder lightly.
+      onPanResponderTerminationRequest: () => false,
+      onPanResponderRelease: commitStroke,
+      // If the gesture is force-terminated, still commit what was drawn.
+      onPanResponderTerminate: commitStroke,
     }),
   ).current;
 
@@ -103,6 +112,26 @@ export function DoodleScreen() {
 
   const isEmpty = paths.length === 0 && !current;
 
+  // Memoized so the committed strokes don't re-render on every in-progress move.
+  const committedSvg = useMemo(
+    () => (
+      <Svg style={StyleSheet.absoluteFill} pointerEvents="none">
+        {paths.map((p, i) => (
+          <Path
+            key={i}
+            d={p.d}
+            stroke={p.color}
+            strokeWidth={p.width}
+            fill="none"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
+        ))}
+      </Svg>
+    ),
+    [paths],
+  );
+
   const onDone = async () => {
     if (isEmpty) {
       navigation.goBack();
@@ -112,6 +141,7 @@ export function DoodleScreen() {
     try {
       const uri = await captureRef(canvasRef, { format: 'png', quality: 1 });
       const relativePath = await copyIntoSandbox(uri, 'png');
+      if (cancelledRef.current) return; // user backed out while capturing
       const att: NoteAttachment = {
         relativePath,
         kind: 'image',
@@ -136,7 +166,15 @@ export function DoodleScreen() {
   return (
     <SafeAreaView style={styles.safe} edges={['top', 'bottom']}>
       <View style={styles.header}>
-        <PressScale onPress={() => navigation.goBack()} style={styles.iconBtn} accessibilityLabel="Cancel">
+        <PressScale
+          onPress={() => {
+            cancelledRef.current = true;
+            navigation.goBack();
+          }}
+          disabled={saving}
+          style={styles.iconBtn}
+          accessibilityLabel="Cancel"
+        >
           <ChevronLeftIcon size={22} color={colors.textPrimary} />
         </PressScale>
         <View style={styles.headerMid}>
@@ -157,7 +195,11 @@ export function DoodleScreen() {
         </PressScale>
       </View>
 
-      {/* Canvas — collapsable={false} so view-shot can capture it on Android. */}
+      {/* Canvas — collapsable={false} so view-shot can capture it on Android.
+          Committed strokes memoize on `paths` and the live stroke sits on its
+          own overlay Svg, so a move only re-renders the one in-progress path
+          (not every committed stroke). pointerEvents="none" keeps the Svgs from
+          becoming the touch target so locationX/Y stay relative to the canvas. */}
       <View
         ref={canvasRef}
         collapsable={false}
@@ -165,18 +207,8 @@ export function DoodleScreen() {
         onLayout={onLayout}
         {...responder.panHandlers}
       >
-        <Svg style={StyleSheet.absoluteFill}>
-          {paths.map((p, i) => (
-            <Path
-              key={i}
-              d={p.d}
-              stroke={p.color}
-              strokeWidth={p.width}
-              fill="none"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            />
-          ))}
+        {committedSvg}
+        <Svg style={StyleSheet.absoluteFill} pointerEvents="none">
           {!!current && (
             <Path
               d={current}

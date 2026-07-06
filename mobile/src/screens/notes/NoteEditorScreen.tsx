@@ -159,7 +159,6 @@ export function NoteEditorScreen() {
     { title: existing?.title ?? '', body: existing?.body ?? '' },
   ]);
   const histIndex = useRef(0);
-  const restoring = useRef(false);
   const snapTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [, bumpHist] = useState(0);
 
@@ -176,7 +175,10 @@ export function NoteEditorScreen() {
 
   const scheduleSnapshot = () => {
     if (snapTimer.current) clearTimeout(snapTimer.current);
-    snapTimer.current = setTimeout(pushSnapshot, 350);
+    snapTimer.current = setTimeout(() => {
+      snapTimer.current = null;
+      pushSnapshot();
+    }, 350);
   };
 
   useEffect(
@@ -186,46 +188,49 @@ export function NoteEditorScreen() {
     [],
   );
 
+  // setTitle/setBody from applySnapshot are programmatic and do NOT fire
+  // onChangeText, so these handlers only run for real user edits (no
+  // "restoring" flag needed).
   const handleTitleChange = (v: string) => {
     setTitle(v);
     latest.current = { ...latest.current, title: v };
-    if (!restoring.current) scheduleSnapshot();
+    scheduleSnapshot();
   };
   const handleBodyChange = (v: string) => {
     setBody(v);
     latest.current = { ...latest.current, body: v };
-    if (!restoring.current) scheduleSnapshot();
+    scheduleSnapshot();
   };
 
   const applySnapshot = (i: number) => {
     const snap = history.current[i];
     if (!snap) return;
-    restoring.current = true;
     setTitle(snap.title);
     setBody(snap.body);
     latest.current = { ...snap };
     histIndex.current = i;
-    setTimeout(() => {
-      restoring.current = false;
-    }, 0);
     bumpHist((v) => v + 1);
   };
 
-  const canUndo = histIndex.current > 0;
-  const canRedo = histIndex.current < history.current.length - 1;
-  const onUndo = () => {
-    // Flush any pending debounced edit first so it becomes an undoable step.
+  // Commit any pending debounced edit before an undo/redo so it becomes its own
+  // step (and a redo can never silently overwrite freshly-typed text).
+  const flushPending = () => {
     if (snapTimer.current) {
       clearTimeout(snapTimer.current);
       snapTimer.current = null;
       pushSnapshot();
     }
+  };
+  // A pending (not-yet-snapshotted) edit is itself undoable, so surface it.
+  const canUndo = histIndex.current > 0 || snapTimer.current !== null;
+  const canRedo = histIndex.current < history.current.length - 1;
+  const onUndo = () => {
+    flushPending();
     if (histIndex.current > 0) applySnapshot(histIndex.current - 1);
   };
   const onRedo = () => {
-    if (histIndex.current < history.current.length - 1) {
-      applySnapshot(histIndex.current + 1);
-    }
+    flushPending();
+    if (histIndex.current < history.current.length - 1) applySnapshot(histIndex.current + 1);
   };
 
   // ── Rich text (markdown) ──────────────────────────────────────────────────
@@ -233,27 +238,40 @@ export function NoteEditorScreen() {
   // renders it via MarkdownText. Keeping the body as plain markdown means
   // search / checklist / card previews are unaffected.
   const bodyRef = useRef<TextInput>(null);
-  const bodySel = useRef({ start: 0, end: 0 });
+  // Seed to end-of-body: RN doesn't fire onSelectionChange until the field is
+  // focused, so a toolbar tap before focusing would otherwise use {0,0} and
+  // inject markdown at the very START of an existing note.
+  const bodySel = useRef({
+    start: (existing?.body ?? '').length,
+    end: (existing?.body ?? '').length,
+  });
   const [previewMode, setPreviewMode] = useState(false);
 
   const applyWrap = (marker: string) => {
     const s = Math.min(bodySel.current.start, body.length);
     const e = Math.min(bodySel.current.end, body.length);
     const sel = body.slice(s, e) || 'text';
+    const caret = s + marker.length + sel.length + marker.length;
+    bodySel.current = { start: caret, end: caret }; // so back-to-back taps compose
     handleBodyChange(`${body.slice(0, s)}${marker}${sel}${marker}${body.slice(e)}`);
     requestAnimationFrame(() => bodyRef.current?.focus());
   };
   const applyLinePrefix = (prefix: string) => {
     const s = Math.min(bodySel.current.start, body.length);
     const lineStart = body.lastIndexOf('\n', s - 1) + 1;
+    bodySel.current = { start: s + prefix.length, end: s + prefix.length };
     handleBodyChange(`${body.slice(0, lineStart)}${prefix}${body.slice(lineStart)}`);
     requestAnimationFrame(() => bodyRef.current?.focus());
   };
 
+  // An EXISTING note may be saved even when emptied (e.g. removing its only
+  // table/checklist); a NEW note still needs content.
+  const canPersist = canSave || !!existing;
+
   const onSave = async () => {
     // Re-entry guard: `savedRef` is a ref (no re-render), so a fast double-tap
     // on Done could otherwise run onSave twice and create two notes.
-    if (!canSave || savedRef.current) return;
+    if (!canPersist || savedRef.current) return;
     savedRef.current = true;
     const finalPath = attachment?.relativePath ?? null;
 
@@ -452,8 +470,8 @@ export function NoteEditorScreen() {
               </PressScale>
               <PressScale
                 onPress={onSave}
-                disabled={!canSave}
-                style={[styles.doneBtn, !canSave && { opacity: 0.4 }]}
+                disabled={!canPersist}
+                style={[styles.doneBtn, !canPersist && { opacity: 0.4 }]}
                 accessibilityRole="button"
                 accessibilityLabel="Done"
               >

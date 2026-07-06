@@ -172,13 +172,16 @@ export function NotesListScreen() {
   // ── Open / unlock ────────────────────────────────────────────────────────
   const openNote = useCallback(
     (note: Note) => {
-      if (note.locked && !isUnlocked(note.id)) {
+      // Only gate when an app passcode actually exists — otherwise a note left
+      // locked after the passcode was cleared could never be opened
+      // (verifyPasscode always fails with no stored hash). Matches the editor.
+      if (note.locked && hasPasscode && !isUnlocked(note.id)) {
         setPending({ note, action: 'open' });
         return;
       }
       navigation.navigate('NoteEditor', { noteId: note.id });
     },
-    [isUnlocked, navigation],
+    [isUnlocked, hasPasscode, navigation],
   );
 
   const onCardPress = useCallback(

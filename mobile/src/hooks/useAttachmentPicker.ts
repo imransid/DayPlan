@@ -36,11 +36,16 @@ function deriveExt(name: string | undefined, mime: string): string {
  */
 export function useAttachmentPicker() {
   const [isBusy, setIsBusy] = useState(false);
-  // True while a native picker is open (the app is backgrounded to it).
   const pendingRef = useRef(false);
+  // True ONLY while the native picker screen is open. The stuck-loader recovery
+  // applies to THIS phase (Activity destroyed → callback lost → promise never
+  // resolves); it must NOT fire during the on-device copyIntoSandbox that
+  // follows a successful pick, or it would re-enable the buttons mid-copy.
+  const pickerOpenRef = useRef(false);
 
   const setBusy = useCallback((next: boolean) => {
     pendingRef.current = next;
+    if (!next) pickerOpenRef.current = false;
     setIsBusy(next);
   }, []);
 
@@ -53,9 +58,9 @@ export function useAttachmentPicker() {
   // clear the orphaned busy flag so the attach buttons re-enable.
   useEffect(() => {
     const sub = AppState.addEventListener('change', (status) => {
-      if (status === 'active' && pendingRef.current) {
+      if (status === 'active' && pickerOpenRef.current) {
         setTimeout(() => {
-          if (pendingRef.current) setBusy(false);
+          if (pickerOpenRef.current) setBusy(false);
         }, 1200);
       }
     });
@@ -64,6 +69,7 @@ export function useAttachmentPicker() {
 
   const pickMedia = useCallback(async (): Promise<NoteAttachment | null> => {
     setBusy(true);
+    pickerOpenRef.current = true;
     try {
       const res = await launchImageLibrary({
         mediaType: 'mixed', // images AND videos
@@ -73,6 +79,7 @@ export function useAttachmentPicker() {
         // dimensions/duration/size come back without it. Keep it off.
         includeExtra: false,
       });
+      pickerOpenRef.current = false; // picker closed — copy phase now
       if (res.didCancel) return null;
       if (res.errorCode) {
         Alert.alert('Could not attach', res.errorMessage ?? 'Unknown picker error.');
@@ -106,6 +113,7 @@ export function useAttachmentPicker() {
 
   const pickCamera = useCallback(async (): Promise<NoteAttachment | null> => {
     setBusy(true);
+    pickerOpenRef.current = true;
     try {
       // No CAMERA permission is declared in the manifest, so image-picker
       // launches the system camera app directly (no runtime permission dance).
@@ -114,6 +122,7 @@ export function useAttachmentPicker() {
         saveToPhotos: false,
         includeExtra: false,
       });
+      pickerOpenRef.current = false; // picker closed — copy phase now
       if (res.didCancel) return null;
       if (res.errorCode) {
         Alert.alert('Could not use camera', res.errorMessage ?? 'Unknown camera error.');
@@ -145,6 +154,7 @@ export function useAttachmentPicker() {
 
   const pickFile = useCallback(async (): Promise<NoteAttachment | null> => {
     setBusy(true);
+    pickerOpenRef.current = true;
     try {
       // `copyTo: 'cachesDirectory'` gives us a stable file:// path (fileCopyUri)
       // even on Android where the raw uri is a transient content:// handle.
@@ -152,6 +162,7 @@ export function useAttachmentPicker() {
         type: [DocTypes.allFiles],
         copyTo: 'cachesDirectory',
       });
+      pickerOpenRef.current = false; // picker closed — copy phase now
       const source = r.fileCopyUri ?? r.uri;
       if (!source) return null;
 
