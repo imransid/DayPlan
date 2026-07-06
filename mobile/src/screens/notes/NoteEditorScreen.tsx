@@ -131,6 +131,84 @@ export function NoteEditorScreen() {
     attachment !== null ||
     cleanedChecklist.length > 0;
 
+  // ── Undo / redo (title + body text history) ───────────────────────────────
+  // A debounced snapshot stack: typing coalesces into word-level steps, undo/
+  // redo walk the stack. `restoring` prevents an applied snapshot from being
+  // re-recorded; `bumpHist` re-renders so the arrow enabled-state updates.
+  const latest = useRef({ title: existing?.title ?? '', body: existing?.body ?? '' });
+  const history = useRef<Array<{ title: string; body: string }>>([
+    { title: existing?.title ?? '', body: existing?.body ?? '' },
+  ]);
+  const histIndex = useRef(0);
+  const restoring = useRef(false);
+  const snapTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [, bumpHist] = useState(0);
+
+  const pushSnapshot = () => {
+    const top = history.current[histIndex.current];
+    const { title: t, body: b } = latest.current;
+    if (top && top.title === t && top.body === b) return;
+    history.current = history.current.slice(0, histIndex.current + 1);
+    history.current.push({ title: t, body: b });
+    if (history.current.length > 100) history.current.shift(); // cap growth
+    histIndex.current = history.current.length - 1;
+    bumpHist((v) => v + 1);
+  };
+
+  const scheduleSnapshot = () => {
+    if (snapTimer.current) clearTimeout(snapTimer.current);
+    snapTimer.current = setTimeout(pushSnapshot, 350);
+  };
+
+  useEffect(
+    () => () => {
+      if (snapTimer.current) clearTimeout(snapTimer.current);
+    },
+    [],
+  );
+
+  const handleTitleChange = (v: string) => {
+    setTitle(v);
+    latest.current = { ...latest.current, title: v };
+    if (!restoring.current) scheduleSnapshot();
+  };
+  const handleBodyChange = (v: string) => {
+    setBody(v);
+    latest.current = { ...latest.current, body: v };
+    if (!restoring.current) scheduleSnapshot();
+  };
+
+  const applySnapshot = (i: number) => {
+    const snap = history.current[i];
+    if (!snap) return;
+    restoring.current = true;
+    setTitle(snap.title);
+    setBody(snap.body);
+    latest.current = { ...snap };
+    histIndex.current = i;
+    setTimeout(() => {
+      restoring.current = false;
+    }, 0);
+    bumpHist((v) => v + 1);
+  };
+
+  const canUndo = histIndex.current > 0;
+  const canRedo = histIndex.current < history.current.length - 1;
+  const onUndo = () => {
+    // Flush any pending debounced edit first so it becomes an undoable step.
+    if (snapTimer.current) {
+      clearTimeout(snapTimer.current);
+      snapTimer.current = null;
+      pushSnapshot();
+    }
+    if (histIndex.current > 0) applySnapshot(histIndex.current - 1);
+  };
+  const onRedo = () => {
+    if (histIndex.current < history.current.length - 1) {
+      applySnapshot(histIndex.current + 1);
+    }
+  };
+
   const onSave = async () => {
     // Re-entry guard: `savedRef` is a ref (no re-render), so a fast double-tap
     // on Done could otherwise run onSave twice and create two notes.
@@ -285,7 +363,29 @@ export function NoteEditorScreen() {
           >
             <ChevronLeftIcon size={22} color={colors.textPrimary} />
           </PressScale>
-          <Text style={styles.headerTitle}>{existing ? 'Edit note' : 'New note'}</Text>
+          {!gated && (
+            <>
+              <PressScale
+                onPress={onUndo}
+                disabled={!canUndo}
+                style={styles.iconBtn}
+                accessibilityRole="button"
+                accessibilityLabel="Undo"
+              >
+                <Text style={[styles.undoGlyph, !canUndo && styles.undoDisabled]}>↶</Text>
+              </PressScale>
+              <PressScale
+                onPress={onRedo}
+                disabled={!canRedo}
+                style={styles.iconBtn}
+                accessibilityRole="button"
+                accessibilityLabel="Redo"
+              >
+                <Text style={[styles.undoGlyph, !canRedo && styles.undoDisabled]}>↷</Text>
+              </PressScale>
+            </>
+          )}
+          <View style={{ flex: 1 }} />
           {gated ? (
             // While a locked note is still gated, the passcode prompt is the
             // only affordance — hide the controls so the lock can't be removed
@@ -342,7 +442,7 @@ export function NoteEditorScreen() {
         >
           <TextInput
             value={title}
-            onChangeText={setTitle}
+            onChangeText={handleTitleChange}
             placeholder="Title"
             placeholderTextColor={colors.textMuted}
             style={styles.titleInput}
@@ -351,7 +451,7 @@ export function NoteEditorScreen() {
 
           <TextInput
             value={body}
-            onChangeText={setBody}
+            onChangeText={handleBodyChange}
             placeholder="Write your note…"
             placeholderTextColor={colors.textMuted}
             style={styles.bodyInput}
@@ -581,6 +681,8 @@ const styles = StyleSheet.create({
     gap: spacing.sm,
   },
   moreGlyph: { fontSize: 22, fontWeight: '700', color: colors.textPrimary },
+  undoGlyph: { fontSize: 24, color: colors.textPrimary, fontWeight: '500' },
+  undoDisabled: { color: colors.textDisabled },
   doneBtn: {
     height: 40,
     paddingHorizontal: 16,
