@@ -38,6 +38,7 @@ import {
 import {
   syncHourlyAlarms,
   requestPermissions,
+  openAlarmSoundSettings,
 } from '../../services/notifications';
 import {
   loadAutoPostConfig,
@@ -202,6 +203,17 @@ export function SettingsScreen({ navigation }: Props) {
     [goalPostTime, workUpdateTime],
   );
 
+  const handleOpenAlarmSound = () => {
+    openAlarmSoundSettings().catch(() => {
+      Alert.alert(
+        'Could not open sound settings',
+        Platform.OS === 'android'
+          ? "Open DayPlan → Notifications → “Hourly task alarm” in your phone's settings to change the ringtone."
+          : "Open DayPlan → Notifications in your phone's settings.",
+      );
+    });
+  };
+
   const handleTestPublish = async (kind: 'goal' | 'work_update') => {
     try {
       const result = await testPublish({ kind }).unwrap();
@@ -301,7 +313,7 @@ export function SettingsScreen({ navigation }: Props) {
             tint={colors.accent}
           />
           <View style={styles.section}>
-            <View style={styles.row}>
+            <View style={[styles.row, styles.rowBorder]}>
               <View style={styles.rowMain}>
                 <Text style={styles.rowLabel}>Hourly task alarm</Text>
                 <Text style={styles.rowSub}>{alarmSub}</Text>
@@ -318,6 +330,13 @@ export function SettingsScreen({ navigation }: Props) {
                 <ActivityIndicator size="small" color={colors.textMuted} />
               )}
             </View>
+            <SettingsRow
+              label="Alarm sound"
+              sub="Pick the ringtone & vibration (choose an alarm tone for a louder ring)"
+              value="Change"
+              onPress={handleOpenAlarmSound}
+              last
+            />
           </View>
         </Animated.View>
 

@@ -49,6 +49,31 @@ const LEGACY_HOURLY_IDS = Array.from(
 
 // ─── Permissions + channel setup ────────────────────────────────────────
 
+/**
+ * Create (or refresh) the Android alarm channel — HIGH importance + alarm
+ * category so the OS treats these like the system Clock app: bypasses Do Not
+ * Disturb, full-screen on lock, ringer respected.
+ *
+ * `sound: "default"` is the initial ringtone; the user can change it to any
+ * system tone (including proper alarm sounds) via openAlarmSoundSettings(),
+ * which is the only way to change a channel's sound after it's created —
+ * Android channel sound is immutable through the API once the channel exists.
+ */
+export async function ensureAlarmChannel(): Promise<void> {
+  if (Platform.OS !== "android") return;
+  await notifee.createChannel({
+    id: ALARM_CHANNEL_ID,
+    name: "Hourly task alarm",
+    description:
+      "Rings every hour from 11 AM to 11 PM with your remaining tasks",
+    importance: AndroidImportance.HIGH,
+    sound: "default",
+    vibration: true,
+    vibrationPattern: [300, 500, 300, 500],
+    bypassDnd: true,
+  });
+}
+
 export async function requestPermissions(): Promise<boolean> {
   const settings = await notifee.requestPermission({
     // criticalAlert is iOS-only; lets the alarm play even in Silent mode if
@@ -57,27 +82,29 @@ export async function requestPermissions(): Promise<boolean> {
     criticalAlert: true,
   });
 
-  if (Platform.OS === "android") {
-    // Alarm channel — HIGH importance + alarm category so the OS treats
-    // these like the system Clock app: bypasses Do Not Disturb, full-screen
-    // on lock, ringer respected.
-    await notifee.createChannel({
-      id: ALARM_CHANNEL_ID,
-      name: "Hourly task alarm",
-      description:
-        "Rings every hour from 11 AM to 11 PM with your remaining tasks",
-      importance: AndroidImportance.HIGH,
-      sound: "default",
-      vibration: true,
-      vibrationPattern: [300, 500, 300, 500],
-      bypassDnd: true,
-    });
-  }
+  await ensureAlarmChannel();
 
   return (
     settings.authorizationStatus === AuthorizationStatus.AUTHORIZED ||
     settings.authorizationStatus === AuthorizationStatus.PROVISIONAL
   );
+}
+
+/**
+ * Open the OS settings where the user picks the alarm RINGTONE (any system
+ * tone, alarm sounds included) and tweaks vibration. On Android this deep-links
+ * straight to the alarm channel's settings; a channel's sound can only be
+ * changed here (not via the API) once the channel exists, so we ensure it
+ * first. iOS has no per-channel sounds (custom sounds require bundled audio
+ * files), so we open the app's notification settings as the closest option.
+ */
+export async function openAlarmSoundSettings(): Promise<void> {
+  if (Platform.OS === "android") {
+    await ensureAlarmChannel();
+    await notifee.openNotificationSettings(ALARM_CHANNEL_ID);
+  } else {
+    await notifee.openNotificationSettings();
+  }
 }
 
 // ─── Hourly alarm scheduling ────────────────────────────────────────────
