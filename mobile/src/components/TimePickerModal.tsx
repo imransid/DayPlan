@@ -1,15 +1,8 @@
 import React, { useEffect, useRef, useState } from 'react';
-import {
-  Modal,
-  View,
-  Text,
-  StyleSheet,
-  Pressable,
-  ScrollView,
-  Platform,
-} from 'react-native';
+import { View, Text, StyleSheet, Pressable, ScrollView } from 'react-native';
 
 import { Button } from './UI';
+import { AppModal } from './AppModal';
 import { colors, spacing, radius, elevation } from '../theme';
 
 interface Props {
@@ -69,10 +62,8 @@ export function TimePickerModal({ visible, value, title, onClose, onSave }: Prop
   };
 
   return (
-    <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
-      <Pressable style={styles.bg} onPress={onClose}>
-        <Pressable style={styles.sheet} onPress={(e) => e.stopPropagation()}>
-          <View style={styles.handle} />
+    <AppModal visible={visible} onClose={onClose} variant="sheet" contentStyle={styles.sheet}>
+      <View style={styles.handle} />
           <Text style={styles.title}>{title ?? 'Pick a time'}</Text>
           <Text style={styles.preview}>
             {hour}:{minute}
@@ -106,9 +97,7 @@ export function TimePickerModal({ visible, value, title, onClose, onSave }: Prop
               <Button label="Save" variant="accent" onPress={handleSave} />
             </View>
           </View>
-        </Pressable>
-      </Pressable>
-    </Modal>
+    </AppModal>
   );
 }
 
@@ -171,7 +160,6 @@ const styles = StyleSheet.create({
     borderTopLeftRadius: radius.xl,
     borderTopRightRadius: radius.xl,
     padding: spacing.lg,
-    paddingBottom: Platform.OS === 'ios' ? spacing.xl + 12 : spacing.xl,
     borderTopWidth: 1,
     borderColor: colors.borderStrong,
     ...elevation.lg,

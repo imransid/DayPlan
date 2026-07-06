@@ -1,17 +1,8 @@
 import React, { useMemo, useState } from 'react';
-import {
-  Modal,
-  View,
-  Text,
-  StyleSheet,
-  Pressable,
-  TextInput,
-  ScrollView,
-  Alert,
-} from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { View, Text, StyleSheet, Pressable, TextInput, ScrollView, Alert } from 'react-native';
 
 import { PressScale } from '../../components/UI';
+import { AppModal } from '../../components/AppModal';
 import { colors, spacing, radius, fontSize, elevation } from '../../theme';
 import { useAppSelector, useAppDispatch } from '../../store/hooks';
 import {
@@ -126,18 +117,17 @@ export function NotebooksSheet({
   };
 
   return (
-    <Modal visible={visible} animationType="slide" onRequestClose={onClose} transparent>
-      <View style={styles.backdrop}>
-        <SafeAreaView style={styles.sheet} edges={['top', 'bottom']}>
-          <View style={styles.header}>
-            <Pressable onPress={onClose} hitSlop={10} style={styles.closeBtn}>
-              <Text style={styles.closeGlyph}>✕</Text>
-            </Pressable>
-            <Text style={styles.headerTitle}>{moving ? 'Move to notebook' : 'Notebooks'}</Text>
-            <View style={styles.closeBtn} />
-          </View>
+    <AppModal visible={visible} onClose={onClose} variant="sheet" contentStyle={styles.sheet}>
+      <View style={styles.grabber} />
+      <View style={styles.header}>
+        <Pressable onPress={onClose} hitSlop={10} style={styles.closeBtn}>
+          <Text style={styles.closeGlyph}>✕</Text>
+        </Pressable>
+        <Text style={styles.headerTitle}>{moving ? 'Move to notebook' : 'Notebooks'}</Text>
+        <View style={styles.closeBtn} />
+      </View>
 
-          <ScrollView contentContainerStyle={{ padding: spacing.lg }}>
+      <ScrollView style={styles.scroll} contentContainerStyle={{ paddingHorizontal: spacing.lg, paddingBottom: spacing.md }}>
             {!moving && (
               <Row
                 label="All notes"
@@ -211,9 +201,7 @@ export function NotebooksSheet({
               </View>
             )}
           </ScrollView>
-        </SafeAreaView>
-      </View>
-    </Modal>
+    </AppModal>
   );
 }
 
@@ -256,8 +244,24 @@ function Row({
 }
 
 const styles = StyleSheet.create({
-  backdrop: { flex: 1, backgroundColor: colors.bg },
-  sheet: { flex: 1 },
+  sheet: {
+    backgroundColor: colors.bg,
+    borderTopLeftRadius: radius.xl,
+    borderTopRightRadius: radius.xl,
+    maxHeight: '90%',
+    paddingTop: spacing.sm,
+  },
+  grabber: {
+    width: 40,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: colors.textDisabled,
+    alignSelf: 'center',
+    marginBottom: spacing.xs,
+  },
+  // flexShrink lets the list scroll INSIDE the maxHeight-capped sheet (RN
+  // ScrollViews default to flexShrink:0 and would otherwise overflow).
+  scroll: { flexShrink: 1 },
   header: {
     flexDirection: 'row',
     alignItems: 'center',
