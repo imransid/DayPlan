@@ -19,9 +19,12 @@ export type MainStackParamList = {
   ChannelPicker: { guildId: string; guildName: string };
   // Enter a code to join a shared team channel (member flow).
   JoinTeamChannel: undefined;
-  // Note editor — create (no params) or edit (noteId). Full pushed screen so
-  // the body + inline media get the whole viewport.
-  NoteEditor: { noteId?: string } | undefined;
+  // Note editor — create (no params) or edit (noteId). `notebookId` seeds the
+  // notebook a newly-created note lands in. Full pushed screen so the body +
+  // inline media get the whole viewport.
+  NoteEditor: { noteId?: string; notebookId?: string } | undefined;
+  // Trash — soft-deleted notes, restore / delete permanently.
+  RecentlyDeleted: undefined;
   // Bottom-sheet add-task screen. Presented as a transparent modal so
   // HomeScreen stays visible underneath; `date` is the UTC task-day key
   // the new task should be created against (passed from HomeScreen).

@@ -24,11 +24,13 @@ import { config } from "../config";
  * fire a notifee trigger at the user's goal/work-update time, and when that
  * trigger fires — EVEN IF THE APP IS CLOSED — notifee runs a short background
  * JS task (verified in NotifeeEventSubscriber: not-in-foreground →
- * startHeadlessTask(..., 60000)). That task calls the same `run-mine` endpoint
- * the manual button uses. The phone becomes the reliable clock.
+ * startHeadlessTask(..., 60000)). That task calls the SAME endpoint the manual
+ * "Send now" button uses (POST /discord/test-publish → publishNow), which posts
+ * unconditionally — so the phone, having already fired at the right local time,
+ * is the reliable clock. See publishScheduledKind for why NOT run-mine.
  *
- * Idempotency lives on the backend (per user, kind, local day), so the
- * background fire + the foreground nudge + any server cron can all run without
+ * publishNow writes the per-day success marker, so the foreground nudge and any
+ * server cron (both idempotent on /scheduler/run-mine) skip afterwards — no
  * double-posting.
  *
  * Platform reality:
@@ -206,26 +208,43 @@ async function getAuthToken(): Promise<string | null> {
   }
 }
 
+/** Which post kind each trigger id is responsible for. */
+const KIND_BY_TRIGGER_ID: Record<string, "goal" | "work_update"> = {
+  [GOAL_TRIGGER_ID]: "goal",
+  [WORK_UPDATE_TRIGGER_ID]: "work_update",
+};
+
 /**
- * Fire the user's DUE scheduled posts on the backend. Same endpoint the app's
- * foreground nudge and the "Send now" button lean on; idempotent per (user,
- * kind, local day) so a background fire + a later foreground open never
- * double-post.
+ * Publish one kind via the SAME endpoint the manual "Send now" button uses
+ * (POST /discord/test-publish → publishNow).
+ *
+ * Why test-publish and NOT /scheduler/run-mine: run-mine re-decides "is this
+ * due?" using the user's *stored profile* timezone (localTime >= HH:mm). The OS
+ * alarm here already fired at the *device's* local time, so if the device tz and
+ * the saved profile tz differ (traveling, wrong tz at signup) — or across a DST
+ * shift — run-mine would compute a different clock and SKIP the post even though
+ * the trigger fired. That was the "auto never posts but manual works" bug: the
+ * manual button hits test-publish, which posts unconditionally. So do the same.
+ *
+ * publishNow writes the per-day success marker, so the foreground nudge and any
+ * server cron (both idempotent on /scheduler/run-mine) skip afterwards — no
+ * double-post. A daily trigger fires once, so it can't double-post itself.
  */
-async function runDueScheduledPosts(): Promise<void> {
+async function publishScheduledKind(kind: "goal" | "work_update"): Promise<void> {
   const token = await getAuthToken();
   if (!token) return; // logged out — nothing to post as
   try {
-    await fetch(`${config.apiUrl}/scheduler/run-mine`, {
+    await fetch(`${config.apiUrl}/discord/test-publish`, {
       method: "POST",
       headers: {
         Authorization: `Bearer ${token}`,
         "Content-Type": "application/json",
       },
+      body: JSON.stringify({ kind }),
     });
   } catch {
     // Best-effort: no network, or the free-tier host is cold-starting. The
-    // foreground nudge on next app open will catch up (backend catch-up window).
+    // foreground nudge on next app open will catch up.
   }
 }
 
@@ -241,8 +260,10 @@ export async function handleScheduledPostEvent(
 ): Promise<void> {
   if (type !== EventType.DELIVERED) return;
   const id = detail?.notification?.id;
-  if (!id || !POST_TRIGGER_IDS.includes(id)) return;
-  await runDueScheduledPosts();
+  if (!id) return;
+  const kind = KIND_BY_TRIGGER_ID[id];
+  if (!kind) return; // not one of our post triggers
+  await publishScheduledKind(kind);
 }
 
 /** Foreground registration — call once from App.tsx. Returns an unsubscribe. */

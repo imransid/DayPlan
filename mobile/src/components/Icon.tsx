@@ -351,6 +351,40 @@ export function NoteIcon({ size = DEFAULT_SIZE, color = colors.textPrimary, weig
   );
 }
 
+export function SearchIcon({ size = DEFAULT_SIZE, color = colors.textPrimary, weight = DEFAULT_WEIGHT }: IconProps) {
+  // A ring (lens) plus a short diagonal handle.
+  const s = size / DEFAULT_SIZE;
+  const ring = 12 * s;
+  return (
+    <View style={[iconStyles.box, { width: size, height: size }]}>
+      <View
+        style={{
+          position: 'absolute',
+          width: ring,
+          height: ring,
+          borderRadius: ring / 2,
+          borderWidth: weight,
+          borderColor: color,
+          top: 3 * s,
+          left: 3 * s,
+        }}
+      />
+      <View
+        style={{
+          position: 'absolute',
+          width: 7 * s,
+          height: weight,
+          borderRadius: weight,
+          backgroundColor: color,
+          top: 16.5 * s,
+          left: 12.5 * s,
+          transform: [{ rotate: '45deg' }],
+        }}
+      />
+    </View>
+  );
+}
+
 const iconStyles = StyleSheet.create({
   box: { alignItems: 'center', justifyContent: 'center' },
   stroke: { position: 'absolute', borderRadius: 4 },
