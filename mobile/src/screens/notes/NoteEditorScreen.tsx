@@ -113,6 +113,18 @@ export function NoteEditorScreen() {
     setAttachment(picked);
   };
 
+  // The Doodle screen returns its rasterised drawing by merging a
+  // `doodleAttachment` param onto this route. Apply it, then clear the param so
+  // it isn't re-applied on a later re-render.
+  useEffect(() => {
+    const doodle = route.params?.doodleAttachment;
+    if (doodle) {
+      applyPicked(doodle);
+      navigation.setParams({ doodleAttachment: undefined });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [route.params?.doodleAttachment]);
+
   // ── Checklist ─────────────────────────────────────────────────────────────
   const cid = () => `c_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
   const addChecklistItem = () =>
@@ -559,6 +571,14 @@ export function NoteEditorScreen() {
               }}
             />
             <AddTile
+              emoji="✏️"
+              label="Doodle"
+              onPress={() => {
+                setAddSheet(false);
+                navigation.navigate('Doodle');
+              }}
+            />
+            <AddTile
               emoji="✅"
               label="Checklist"
               onPress={() => {
@@ -727,8 +747,8 @@ const styles = StyleSheet.create({
     marginBottom: spacing.md,
   },
   sheetTitle: { fontSize: fontSize.title, fontWeight: '800', color: colors.textPrimary, marginBottom: spacing.md },
-  addGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.md },
-  addTile: { width: '22%', alignItems: 'center', gap: 6, paddingVertical: spacing.sm },
+  addGrid: { flexDirection: 'row', flexWrap: 'wrap', rowGap: spacing.lg, columnGap: spacing.sm },
+  addTile: { width: '30%', alignItems: 'center', gap: 6, paddingVertical: spacing.sm },
   addTileIcon: {
     width: 56,
     height: 56,
