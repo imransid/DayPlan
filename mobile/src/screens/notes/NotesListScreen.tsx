@@ -551,6 +551,14 @@ const NoteCard = React.memo(function NoteCard({
               {note.body.trim()}
             </Text>
           )}
+          {!note.body.trim() && note.checklist && note.checklist.length > 0 && (
+            <Text style={styles.cardBody} numberOfLines={variant === 'grid' ? 5 : 1}>
+              {note.checklist
+                .slice(0, 6)
+                .map((c) => `${c.done ? '☑' : '☐'} ${c.text}`)
+                .join('\n')}
+            </Text>
+          )}
           {thumb && (
             <Image
               source={{ uri: thumb }}
@@ -561,6 +569,11 @@ const NoteCard = React.memo(function NoteCard({
           )}
           <View style={styles.cardFooter}>
             {note.pinned && <Text style={styles.pinGlyph}>📌</Text>}
+            {note.checklist && note.checklist.length > 0 && (
+              <Text style={styles.cardMeta}>
+                ☑ {note.checklist.filter((c) => c.done).length}/{note.checklist.length}
+              </Text>
+            )}
             <Text style={styles.cardMeta}>{date}</Text>
           </View>
         </>

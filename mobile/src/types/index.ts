@@ -106,10 +106,19 @@ export interface NoteAttachment {
   height?: number;
 }
 
+/** A single checkable line inside a note's checklist. */
+export interface ChecklistItem {
+  id: string;
+  text: string;
+  done: boolean;
+}
+
 export interface Note {
   id: string;
   title: string;
   body: string;
+  /** Optional checklist (the reference app's checkbox feature). */
+  checklist?: ChecklistItem[];
   /** ISO 8601 UTC instant. */
   createdAt: string;
   /** ISO 8601 UTC instant. */

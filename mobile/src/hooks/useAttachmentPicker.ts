@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Alert, AppState } from 'react-native';
-import { launchImageLibrary } from 'react-native-image-picker';
+import { launchCamera, launchImageLibrary } from 'react-native-image-picker';
 import DocumentPicker, { types as DocTypes } from 'react-native-document-picker';
 
 import { copyIntoSandbox } from '../services/attachmentStorage';
@@ -104,6 +104,45 @@ export function useAttachmentPicker() {
     }
   }, [setBusy]);
 
+  const pickCamera = useCallback(async (): Promise<NoteAttachment | null> => {
+    setBusy(true);
+    try {
+      // No CAMERA permission is declared in the manifest, so image-picker
+      // launches the system camera app directly (no runtime permission dance).
+      const res = await launchCamera({
+        mediaType: 'photo',
+        saveToPhotos: false,
+        includeExtra: false,
+      });
+      if (res.didCancel) return null;
+      if (res.errorCode) {
+        Alert.alert('Could not use camera', res.errorMessage ?? 'Unknown camera error.');
+        return null;
+      }
+      const asset = res.assets?.[0];
+      if (!asset?.uri) return null;
+
+      const mime = asset.type ?? 'image/jpeg';
+      const name = asset.fileName ?? `photo.${deriveExt(undefined, mime)}`;
+      const relativePath = await copyIntoSandbox(asset.uri, deriveExt(asset.fileName, mime));
+
+      return {
+        relativePath,
+        kind: kindFromMime(mime),
+        name,
+        mime,
+        size: asset.fileSize ?? 0,
+        width: asset.width,
+        height: asset.height,
+      };
+    } catch (err: any) {
+      Alert.alert('Could not use camera', String(err?.message ?? err));
+      return null;
+    } finally {
+      setBusy(false);
+    }
+  }, [setBusy]);
+
   const pickFile = useCallback(async (): Promise<NoteAttachment | null> => {
     setBusy(true);
     try {
@@ -136,5 +175,5 @@ export function useAttachmentPicker() {
     }
   }, [setBusy]);
 
-  return { pickMedia, pickFile, isBusy };
+  return { pickMedia, pickCamera, pickFile, isBusy };
 }

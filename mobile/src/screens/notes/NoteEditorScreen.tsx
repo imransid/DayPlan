@@ -15,10 +15,11 @@ import { useNavigation, useRoute, type RouteProp } from '@react-navigation/nativ
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 
 import { Button, PressScale } from '../../components/UI';
-import { ChevronLeftIcon } from '../../components/Icon';
+import { ChevronLeftIcon, PlusIcon } from '../../components/Icon';
 import { AttachmentPreview } from '../../components/AttachmentPreview';
 import { ErrorBoundary } from '../../components/ErrorBoundary';
 import { PasscodeModal } from '../../components/PasscodeModal';
+import { AppModal } from '../../components/AppModal';
 import { colors, spacing, radius, fontSize, elevation } from '../../theme';
 import { useAppDispatch, useAppSelector } from '../../store/hooks';
 import {
@@ -33,7 +34,7 @@ import { useAttachmentPicker } from '../../hooks/useAttachmentPicker';
 import { useLock } from '../../context/LockContext';
 import { DEFAULT_NOTEBOOK_ID } from '../../types';
 import type { MainStackParamList } from '../../navigation/types';
-import type { Note, NoteAttachment } from '../../types';
+import type { Note, NoteAttachment, ChecklistItem } from '../../types';
 
 type Nav = NativeStackNavigationProp<MainStackParamList, 'NoteEditor'>;
 type R = RouteProp<MainStackParamList, 'NoteEditor'>;
@@ -47,7 +48,7 @@ export function NoteEditorScreen() {
   const route = useRoute<R>();
   const insets = useSafeAreaInsets();
   const dispatch = useAppDispatch();
-  const { pickMedia, pickFile, isBusy } = useAttachmentPicker();
+  const { pickMedia, pickCamera, pickFile, isBusy } = useAttachmentPicker();
 
   const noteId = route.params?.noteId;
   const existing = useAppSelector((s) =>
@@ -57,6 +58,10 @@ export function NoteEditorScreen() {
   const [title, setTitle] = useState(existing?.title ?? '');
   const [body, setBody] = useState(existing?.body ?? '');
   const [attachment, setAttachment] = useState<NoteAttachment | null>(existing?.attachment ?? null);
+  const [checklist, setChecklist] = useState<ChecklistItem[]>(existing?.checklist ?? []);
+  // Bottom sheets: "+ Add" (media/checklist) and the ⋮ overflow (pin/lock/delete).
+  const [addSheet, setAddSheet] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
 
   // ── Lock state ──────────────────────────────────────────────────────────
   const { hasPasscode, isUnlocked, unlock, verifyPasscode, setPasscode } = useLock();
@@ -102,7 +107,23 @@ export function NoteEditorScreen() {
     setAttachment(picked);
   };
 
-  const canSave = title.trim().length > 0 || body.trim().length > 0 || attachment !== null;
+  // ── Checklist ─────────────────────────────────────────────────────────────
+  const cid = () => `c_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+  const addChecklistItem = () =>
+    setChecklist((l) => [...l, { id: cid(), text: '', done: false }]);
+  const toggleChecklistItem = (id: string) =>
+    setChecklist((l) => l.map((c) => (c.id === id ? { ...c, done: !c.done } : c)));
+  const updateChecklistItem = (id: string, text: string) =>
+    setChecklist((l) => l.map((c) => (c.id === id ? { ...c, text } : c)));
+  const removeChecklistItem = (id: string) =>
+    setChecklist((l) => l.filter((c) => c.id !== id));
+
+  const cleanedChecklist = checklist.filter((c) => c.text.trim().length > 0);
+  const canSave =
+    title.trim().length > 0 ||
+    body.trim().length > 0 ||
+    attachment !== null ||
+    cleanedChecklist.length > 0;
 
   const onSave = async () => {
     if (!canSave) return;
@@ -121,7 +142,12 @@ export function NoteEditorScreen() {
     await Promise.allSettled(toDelete.map((p) => removeAttachment(p)));
 
     if (existing) {
-      dispatch(updateNote({ id: existing.id, changes: { title, body, attachment } }));
+      dispatch(
+        updateNote({
+          id: existing.id,
+          changes: { title, body, attachment, checklist: cleanedChecklist },
+        }),
+      );
     } else {
       const now = new Date().toISOString();
       const id = newId();
@@ -132,6 +158,7 @@ export function NoteEditorScreen() {
         createdAt: now,
         updatedAt: now,
         attachment,
+        checklist: cleanedChecklist,
         locked: pendingLock,
         notebookId: route.params?.notebookId ?? DEFAULT_NOTEBOOK_ID,
       };
@@ -248,44 +275,29 @@ export function NoteEditorScreen() {
           <Text style={styles.headerTitle}>{existing ? 'Edit note' : 'New note'}</Text>
           {gated ? (
             // While a locked note is still gated, the passcode prompt is the
-            // only affordance — hide the lock/delete controls so the lock
-            // can't be removed without first unlocking.
+            // only affordance — hide the controls so the lock can't be removed
+            // without first unlocking.
             <View style={styles.iconBtn} />
           ) : (
-            // Lock control shows for BOTH new and existing notes so a password
-            // can be set the moment you create a note — not only after saving,
-            // leaving, and reopening it. Labelled so it isn't a bare emoji.
             <View style={styles.headerActions}>
-              {existing && (
-                <PressScale
-                  onPress={onTogglePin}
-                  style={styles.iconBtn}
-                  accessibilityRole="button"
-                  accessibilityLabel={existing.pinned ? 'Unpin note' : 'Pin note'}
-                >
-                  <Text style={[styles.lockGlyph, !existing.pinned && { opacity: 0.4 }]}>📌</Text>
-                </PressScale>
-              )}
+              {/* Pin/Lock/Delete moved into a ⋮ overflow to declutter the bar. */}
               <PressScale
-                onPress={onToggleLock}
-                style={styles.lockBtn}
+                onPress={() => setMenuOpen(true)}
+                style={styles.iconBtn}
                 accessibilityRole="button"
-                accessibilityLabel={showLocked ? 'Remove lock' : 'Lock note'}
+                accessibilityLabel="More options"
               >
-                <Text style={styles.lockGlyph}>{showLocked ? '🔒' : '🔓'}</Text>
-                <Text style={styles.lockBtnLabel}>{showLocked ? 'Locked' : 'Lock'}</Text>
+                <Text style={styles.moreGlyph}>⋮</Text>
               </PressScale>
-              {existing && (
-                <PressScale
-                  onPress={onDelete}
-                  style={styles.iconBtn}
-                  accessibilityRole="button"
-                  accessibilityLabel="Delete note"
-                >
-                  <View style={styles.trashLid} />
-                  <View style={styles.trashBody} />
-                </PressScale>
-              )}
+              <PressScale
+                onPress={onSave}
+                disabled={!canSave}
+                style={[styles.doneBtn, !canSave && { opacity: 0.4 }]}
+                accessibilityRole="button"
+                accessibilityLabel="Done"
+              >
+                <Text style={styles.doneText}>Done</Text>
+              </PressScale>
             </View>
           )}
         </View>
@@ -334,7 +346,7 @@ export function NoteEditorScreen() {
             textAlignVertical="top"
           />
 
-          {attachment ? (
+          {attachment && (
             <View style={{ marginTop: spacing.lg }}>
               {/* Contain any render-time crash in the media subtree (Image /
                   Video / Modal) so a bad attachment degrades to a placeholder
@@ -355,34 +367,141 @@ export function NoteEditorScreen() {
                 <AttachmentPreview attachment={attachment} onRemove={() => setAttachment(null)} />
               </ErrorBoundary>
             </View>
-          ) : (
-            <View style={styles.attachRow}>
-              <Button
-                label="Photo / Video"
-                variant="secondary"
-                fullWidth={false}
-                loading={isBusy}
-                disabled={isBusy}
-                onPress={async () => applyPicked(await pickMedia())}
-                style={styles.attachBtn}
-              />
-              <Button
-                label="File"
-                variant="outline"
-                fullWidth={false}
-                disabled={isBusy}
-                onPress={async () => applyPicked(await pickFile())}
-                style={styles.attachBtn}
-              />
+          )}
+
+          {checklist.length > 0 && (
+            <View style={styles.checklist}>
+              {checklist.map((item) => (
+                <View key={item.id} style={styles.checkRow}>
+                  <Pressable
+                    onPress={() => toggleChecklistItem(item.id)}
+                    style={[styles.checkbox, item.done && styles.checkboxOn]}
+                    hitSlop={6}
+                    accessibilityRole="checkbox"
+                    accessibilityState={{ checked: item.done }}
+                  >
+                    {item.done && <Text style={styles.checkTick}>✓</Text>}
+                  </Pressable>
+                  <TextInput
+                    value={item.text}
+                    onChangeText={(t) => updateChecklistItem(item.id, t)}
+                    placeholder="List item"
+                    placeholderTextColor={colors.textMuted}
+                    style={[styles.checkInput, item.done && styles.checkInputDone]}
+                    onSubmitEditing={addChecklistItem}
+                    blurOnSubmit={false}
+                    returnKeyType="next"
+                  />
+                  <Pressable onPress={() => removeChecklistItem(item.id)} hitSlop={6}>
+                    <Text style={styles.checkRemove}>✕</Text>
+                  </Pressable>
+                </View>
+              ))}
+              <Pressable onPress={addChecklistItem} style={styles.checkAdd}>
+                <Text style={styles.checkAddText}>+ Add item</Text>
+              </Pressable>
             </View>
           )}
-        </ScrollView>
 
-        <View style={[styles.footer, { paddingBottom: Math.max(insets.bottom, spacing.md) }]}>
-          <Button label={existing ? 'Save changes' : 'Save note'} variant="accent" disabled={!canSave} onPress={onSave} />
-        </View>
+          <Pressable
+            onPress={() => setAddSheet(true)}
+            style={styles.addRow}
+            disabled={isBusy}
+            accessibilityRole="button"
+            accessibilityLabel="Add attachment or checklist"
+          >
+            <PlusIcon size={18} color={colors.accent} weight={2.4} />
+            <Text style={styles.addRowText}>
+              {isBusy ? 'Adding…' : 'Add photo, file or checklist'}
+            </Text>
+          </Pressable>
+        </ScrollView>
           </>
         )}
+
+        {/* "+ Add" sheet — Photos / Camera / Files / Checklist */}
+        <AppModal
+          visible={addSheet}
+          onClose={() => setAddSheet(false)}
+          variant="sheet"
+          contentStyle={styles.sheet}
+        >
+          <View style={styles.grabber} />
+          <Text style={styles.sheetTitle}>Add</Text>
+          <View style={styles.addGrid}>
+            <AddTile
+              emoji="🖼️"
+              label="Photos"
+              onPress={async () => {
+                setAddSheet(false);
+                applyPicked(await pickMedia());
+              }}
+            />
+            <AddTile
+              emoji="📷"
+              label="Camera"
+              onPress={async () => {
+                setAddSheet(false);
+                applyPicked(await pickCamera());
+              }}
+            />
+            <AddTile
+              emoji="✅"
+              label="Checklist"
+              onPress={() => {
+                setAddSheet(false);
+                if (checklist.length === 0) addChecklistItem();
+              }}
+            />
+            <AddTile
+              emoji="📎"
+              label="Files"
+              onPress={async () => {
+                setAddSheet(false);
+                applyPicked(await pickFile());
+              }}
+            />
+          </View>
+        </AppModal>
+
+        {/* ⋮ overflow — Pin / Lock / Delete */}
+        <AppModal
+          visible={menuOpen}
+          onClose={() => setMenuOpen(false)}
+          variant="sheet"
+          contentStyle={styles.sheet}
+        >
+          <View style={styles.grabber} />
+          {existing && (
+            <MenuRow
+              emoji="📌"
+              label={existing.pinned ? 'Unpin' : 'Pin'}
+              onPress={() => {
+                setMenuOpen(false);
+                onTogglePin();
+              }}
+            />
+          )}
+          <MenuRow
+            emoji={showLocked ? '🔒' : '🔓'}
+            label={showLocked ? 'Remove lock' : 'Lock note'}
+            onPress={() => {
+              setMenuOpen(false);
+              onToggleLock();
+            }}
+          />
+          {existing && (
+            <MenuRow
+              emoji="🗑️"
+              label="Delete"
+              danger
+              onPress={() => {
+                setMenuOpen(false);
+                onDelete();
+              }}
+            />
+          )}
+        </AppModal>
 
         <PasscodeModal
           visible={passcodeMode !== null}
@@ -401,6 +520,44 @@ export function NoteEditorScreen() {
   );
 }
 
+function AddTile({
+  emoji,
+  label,
+  onPress,
+}: {
+  emoji: string;
+  label: string;
+  onPress: () => void;
+}) {
+  return (
+    <PressScale onPress={onPress} style={styles.addTile} scaleTo={0.95}>
+      <View style={styles.addTileIcon}>
+        <Text style={styles.addTileEmoji}>{emoji}</Text>
+      </View>
+      <Text style={styles.addTileLabel}>{label}</Text>
+    </PressScale>
+  );
+}
+
+function MenuRow({
+  emoji,
+  label,
+  onPress,
+  danger,
+}: {
+  emoji: string;
+  label: string;
+  onPress: () => void;
+  danger?: boolean;
+}) {
+  return (
+    <PressScale onPress={onPress} style={styles.menuRow} scaleTo={0.99}>
+      <Text style={styles.menuEmoji}>{emoji}</Text>
+      <Text style={[styles.menuLabel, danger && { color: colors.danger }]}>{label}</Text>
+    </PressScale>
+  );
+}
+
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: colors.screen },
   header: {
@@ -410,6 +567,93 @@ const styles = StyleSheet.create({
     paddingVertical: spacing.sm,
     gap: spacing.sm,
   },
+  moreGlyph: { fontSize: 22, fontWeight: '700', color: colors.textPrimary },
+  doneBtn: {
+    height: 40,
+    paddingHorizontal: 16,
+    borderRadius: radius.pill,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: colors.accent,
+  },
+  doneText: { color: '#fff', fontSize: 15, fontWeight: '700' },
+
+  // ── "+ Add" row + sheet ──
+  addRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    marginTop: spacing.lg,
+    paddingVertical: 14,
+    paddingHorizontal: spacing.md,
+    borderWidth: 1.5,
+    borderStyle: 'dashed',
+    borderColor: 'rgba(99, 102, 241, 0.35)',
+    borderRadius: radius.md,
+    backgroundColor: 'rgba(255,255,255,0.25)',
+  },
+  addRowText: { fontSize: fontSize.body, color: colors.accent, fontWeight: '700' },
+  sheet: {
+    backgroundColor: colors.surfaceStrong,
+    borderTopLeftRadius: radius.xl,
+    borderTopRightRadius: radius.xl,
+    paddingHorizontal: spacing.lg,
+    paddingTop: spacing.sm,
+    borderTopWidth: 1,
+    borderColor: colors.borderStrong,
+    ...elevation.lg,
+  },
+  grabber: {
+    width: 40,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: colors.textDisabled,
+    alignSelf: 'center',
+    marginBottom: spacing.md,
+  },
+  sheetTitle: { fontSize: fontSize.title, fontWeight: '800', color: colors.textPrimary, marginBottom: spacing.md },
+  addGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.md },
+  addTile: { width: '22%', alignItems: 'center', gap: 6, paddingVertical: spacing.sm },
+  addTileIcon: {
+    width: 56,
+    height: 56,
+    borderRadius: radius.md,
+    backgroundColor: colors.surfaceAlt,
+    borderWidth: 1,
+    borderColor: colors.border,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  addTileEmoji: { fontSize: 26 },
+  addTileLabel: { fontSize: fontSize.small, color: colors.textSecondary, fontWeight: '600' },
+  menuRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.md,
+    paddingVertical: 15,
+  },
+  menuEmoji: { fontSize: 20 },
+  menuLabel: { fontSize: fontSize.body, fontWeight: '600', color: colors.textPrimary },
+
+  // ── Checklist ──
+  checklist: { marginTop: spacing.lg, gap: spacing.xs },
+  checkRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
+  checkbox: {
+    width: 24,
+    height: 24,
+    borderRadius: 7,
+    borderWidth: 2,
+    borderColor: colors.textMuted,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  checkboxOn: { backgroundColor: colors.accent, borderColor: colors.accent },
+  checkTick: { color: '#fff', fontSize: 13, fontWeight: '900' },
+  checkInput: { flex: 1, fontSize: fontSize.body, color: colors.textPrimary, paddingVertical: 8 },
+  checkInputDone: { color: colors.textMuted, textDecorationLine: 'line-through' },
+  checkRemove: { fontSize: 15, color: colors.textMuted, paddingHorizontal: 4 },
+  checkAdd: { paddingVertical: 10, paddingLeft: 34 },
+  checkAddText: { fontSize: fontSize.body, color: colors.accent, fontWeight: '600' },
   iconBtn: {
     width: 40,
     height: 40,
