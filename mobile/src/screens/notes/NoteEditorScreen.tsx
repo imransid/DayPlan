@@ -66,9 +66,11 @@ export function NoteEditorScreen() {
   // ── Lock state ──────────────────────────────────────────────────────────
   const { hasPasscode, isUnlocked, unlock, verifyPasscode, setPasscode } = useLock();
   const isLocked = !!existing?.locked;
-  // A note is gated when it's locked and not unlocked in this session. New
-  // (unsaved) notes are never gated.
-  const gated = !!existing && isLocked && !isUnlocked(existing.id);
+  // A note is gated when it's locked, not unlocked this session, AND an app
+  // passcode actually exists. Without the hasPasscode guard, a note left locked
+  // after the passcode was cleared would be gated forever with no way to unlock
+  // (verifyPasscode always fails when there's no stored hash).
+  const gated = !!existing && isLocked && hasPasscode && !isUnlocked(existing.id);
   // Passcode modal: 'enter' to open a gated note, 'set' to create the app
   // passcode when locking the first note.
   const [passcodeMode, setPasscodeMode] = useState<'enter' | 'set' | null>(null);
@@ -76,6 +78,10 @@ export function NoteEditorScreen() {
   // to lock and apply it on save. For an existing note the source of truth is
   // the persisted `locked` flag.
   const [pendingLock, setPendingLock] = useState(false);
+  // For a brand-new note, the first-ever app passcode is captured here and only
+  // committed to the (persisted) securitySlice when the note is actually saved
+  // — so abandoning the note doesn't leave a global passcode set forever.
+  const [pendingPasscode, setPendingPasscode] = useState<string | null>(null);
   const showLocked = existing ? isLocked : pendingLock;
 
   // Auto-prompt for the passcode when arriving at (or returning to) a gated
@@ -126,7 +132,9 @@ export function NoteEditorScreen() {
     cleanedChecklist.length > 0;
 
   const onSave = async () => {
-    if (!canSave) return;
+    // Re-entry guard: `savedRef` is a ref (no re-render), so a fast double-tap
+    // on Done could otherwise run onSave twice and create two notes.
+    if (!canSave || savedRef.current) return;
     savedRef.current = true;
     const finalPath = attachment?.relativePath ?? null;
 
@@ -149,6 +157,8 @@ export function NoteEditorScreen() {
         }),
       );
     } else {
+      // Commit a deferred first-ever passcode now that the note is being saved.
+      if (pendingLock && pendingPasscode) setPasscode(pendingPasscode);
       const now = new Date().toISOString();
       const id = newId();
       const note: Note = {
@@ -237,13 +247,16 @@ export function NoteEditorScreen() {
 
   const handlePasscodeSubmit = (passcode: string): boolean => {
     if (passcodeMode === 'set') {
-      // First-ever passcode → save it, then lock this note (existing) or record
-      // the intent to lock it on save (new).
-      setPasscode(passcode);
       if (existing) {
+        // First-ever passcode → commit it now and lock this saved note.
+        setPasscode(passcode);
         dispatch(setNoteLocked({ id: existing.id, locked: true }));
         unlock(existing.id);
       } else {
+        // New note: defer BOTH the passcode and the lock until the note is
+        // actually saved (see onSave), so abandoning it leaves no global
+        // passcode behind.
+        setPendingPasscode(passcode);
         setPendingLock(true);
       }
       setPasscodeMode(null);

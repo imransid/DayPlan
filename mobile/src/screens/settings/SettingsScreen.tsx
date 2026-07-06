@@ -103,6 +103,15 @@ export function SettingsScreen({ navigation }: Props) {
     }
   }, [autoPostLoaded, autoPost.enabled, goalPostTime, workUpdateTime]);
 
+  // Re-schedule the hourly alarm when the pending-task count resolves (tasks
+  // load as [] first) so enabling it on Settings — without visiting Home —
+  // actually schedules with an accurate count instead of a no-op at count 0.
+  useEffect(() => {
+    if (alarmLoaded && alarm.enabled) {
+      syncHourlyAlarms(pendingCount).catch(() => undefined);
+    }
+  }, [alarmLoaded, alarm.enabled, pendingCount]);
+
   const handleLogout = () => {
     Alert.alert('Sign out', 'Are you sure?', [
       { text: 'Cancel', style: 'cancel' },

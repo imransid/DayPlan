@@ -27,6 +27,7 @@ import {
   trashNotes,
   permanentlyDeleteNotes,
   setViewMode,
+  DEFAULT_NOTEBOOK,
 } from '../../store/slices/notesSlice';
 import { absoluteUri, removeAttachment } from '../../services/attachmentStorage';
 import { useLock } from '../../context/LockContext';
@@ -49,9 +50,10 @@ export function NotesListScreen() {
   // FAB and select-action bar sit ABOVE it.
   const tabBar = 64 + insets.bottom;
   const allNotes = useAppSelector((s) => s.notes.items);
-  // `?? …` guards against a persisted pre-notebooks shape that autoMergeLevel1
-  // hasn't seeded yet (defensive — normally these are always present).
-  const notebooks = useAppSelector((s) => s.notes.notebooks ?? []);
+  // Fall back to the built-in default notebook / 'grid' for users whose
+  // persisted state predates these fields (the default reconciler doesn't seed
+  // them — see store.ts). The notebook reducers seed the same default on write.
+  const notebooks = useAppSelector((s) => s.notes.notebooks ?? [DEFAULT_NOTEBOOK]);
   const viewMode = useAppSelector((s) => s.notes.viewMode ?? 'grid');
   const { isUnlocked, unlock, verifyPasscode, hasPasscode, setPasscode } = useLock();
 
@@ -101,7 +103,10 @@ export function NotesListScreen() {
     if (q) {
       list = list.filter(
         (n) =>
-          !n.locked && // don't leak locked content through search
+          // Don't leak locked content through search — EXCEPT in the locked
+          // view, which the user opened intentionally (otherwise every query
+          // there matches nothing).
+          (filter === 'locked' || !n.locked) &&
           (n.title.toLowerCase().includes(q) || n.body.toLowerCase().includes(q)),
       );
     }
@@ -112,6 +117,18 @@ export function NotesListScreen() {
 
   const pinned = useMemo(() => visible.filter((n) => n.pinned), [visible]);
   const others = useMemo(() => visible.filter((n) => !n.pinned), [visible]);
+
+  // Lookup over ALL active notes (not just `visible`) so batch actions stay
+  // correct even if the selection outlives a filter change.
+  const byId = useMemo(() => new Map(activeNotes.map((n) => [n.id, n])), [activeNotes]);
+
+  // If the selected notebook was deleted, snap back to All notes so the list
+  // repopulates and the FAB doesn't stamp new notes with an orphan notebookId.
+  useEffect(() => {
+    if (filter !== 'all' && filter !== 'locked' && !notebooks.some((nb) => nb.id === filter)) {
+      setFilter('all');
+    }
+  }, [filter, notebooks]);
 
   const filterLabel =
     filter === 'all'
@@ -142,6 +159,14 @@ export function NotesListScreen() {
   }, [visible]);
 
   const selectedIds = useMemo(() => [...selected], [selected]);
+
+  // Changing the filter mid-selection would strand selected ids that are no
+  // longer visible (batch actions would then hit off-screen notes). Exit select
+  // mode whenever the filter changes.
+  useEffect(() => {
+    if (selectMode) exitSelect();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [filter]);
 
   // ── Open / unlock ────────────────────────────────────────────────────────
   const openNote = useCallback(
@@ -179,8 +204,9 @@ export function NotesListScreen() {
   // ── Batch actions ──────────────────────────────────────────────────────────
   const doPin = () => {
     if (!selectedIds.length) return;
-    // If every selected note is already pinned, unpin; else pin.
-    const allPinned = selectedIds.every((id) => visible.find((n) => n.id === id)?.pinned);
+    // If every selected note is already pinned, unpin; else pin. Look up in the
+    // full active set (not `visible`) so it's correct regardless of the filter.
+    const allPinned = selectedIds.every((id) => byId.get(id)?.pinned);
     dispatch(setManyPinned({ ids: selectedIds, pinned: !allPinned }));
     exitSelect();
   };
@@ -233,7 +259,7 @@ export function NotesListScreen() {
   );
 
   const selectAllPinned =
-    selectedIds.length > 0 && selectedIds.every((id) => visible.find((n) => n.id === id)?.pinned);
+    selectedIds.length > 0 && selectedIds.every((id) => byId.get(id)?.pinned);
 
   const empty = visible.length === 0;
 
@@ -261,7 +287,12 @@ export function NotesListScreen() {
             </Text>
           </View>
           <PressScale
-            onPress={() => setSearching((s) => !s)}
+            onPress={() =>
+              setSearching((s) => {
+                if (s) setQuery(''); // closing search clears the filter
+                return !s;
+              })
+            }
             style={styles.headerBtn}
             accessibilityLabel="Search"
           >

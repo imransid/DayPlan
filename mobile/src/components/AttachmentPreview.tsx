@@ -110,10 +110,9 @@ function ImageAttachment({ uri, attachment }: { uri: string; attachment: NoteAtt
             style={styles.viewerImage}
             resizeMode="contain"
             resizeMethod="resize"
-            onError={() => {
-              setZoomed(false);
-              setFailed(true);
-            }}
+            // Only close the viewer; the thumbnail already decoded fine, so
+            // don't collapse it to the error placeholder too.
+            onError={() => setZoomed(false)}
           />
         </Pressable>
       </AppModal>

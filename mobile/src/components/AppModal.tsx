@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import {
   BackHandler,
+  Dimensions,
   KeyboardAvoidingView,
   Platform,
   Pressable,
@@ -37,8 +38,9 @@ interface Props {
 // Snappy but soft — reads as "settled" rather than bouncy.
 const OPEN_SPRING = { damping: 20, stiffness: 230, mass: 0.9 } as const;
 const CLOSE = { duration: 180 } as const;
-// Sheet off-screen travel; larger than any sheet so it fully clears the screen.
-const SHEET_TRAVEL = 900;
+// Sheet off-screen travel — the full window height always clears any sheet
+// (capped at 90% of the screen) regardless of device size.
+const SHEET_TRAVEL = Dimensions.get('window').height;
 
 /**
  * Smooth, portal-rendered modal — replaces React Native's <Modal> (which the
@@ -118,7 +120,7 @@ export function AppModal({
           onPress={onBackdrop}
         />
         <KeyboardAvoidingView
-          style={[styles.host, isSheet ? styles.hostSheet : styles.hostCenter]}
+          style={[styles.host, isSheet ? styles.hostSheet : isFull ? null : styles.hostCenter]}
           behavior={Platform.OS === 'ios' ? 'padding' : undefined}
           pointerEvents="box-none"
         >
