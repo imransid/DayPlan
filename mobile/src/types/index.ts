@@ -122,4 +122,28 @@ export interface Note {
    * default to unlocked. See securitySlice + LockContext.
    */
   locked?: boolean;
+  /** Pinned notes float to the top in their own "Pin" section. */
+  pinned?: boolean;
+  /** Which notebook the note lives in. Missing ⇒ the default notebook. */
+  notebookId?: string;
+  /**
+   * ISO instant the note was moved to "Recently deleted". Missing/null ⇒ the
+   * note is active. Soft-deleted notes are hidden from the main list, kept for
+   * 30 days, then purged. See notesSlice.
+   */
+  deletedAt?: string | null;
 }
+
+/** A notebook groups notes. The built-in "default" notebook always exists. */
+export interface Notebook {
+  id: string;
+  name: string;
+  /** ISO 8601 UTC instant. */
+  createdAt: string;
+}
+
+/** Notes list layout — a staggered 2-column grid or a single-column list. */
+export type NotesViewMode = 'grid' | 'list';
+
+/** The built-in notebook every note falls back to. */
+export const DEFAULT_NOTEBOOK_ID = 'default';

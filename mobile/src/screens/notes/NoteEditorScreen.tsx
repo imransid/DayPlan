@@ -21,10 +21,17 @@ import { ErrorBoundary } from '../../components/ErrorBoundary';
 import { PasscodeModal } from '../../components/PasscodeModal';
 import { colors, spacing, radius, fontSize, elevation } from '../../theme';
 import { useAppDispatch, useAppSelector } from '../../store/hooks';
-import { addNote, updateNote, deleteNote, setNoteLocked } from '../../store/slices/notesSlice';
+import {
+  addNote,
+  updateNote,
+  trashNotes,
+  setNoteLocked,
+  setNotePinned,
+} from '../../store/slices/notesSlice';
 import { removeAttachment } from '../../services/attachmentStorage';
 import { useAttachmentPicker } from '../../hooks/useAttachmentPicker';
 import { useLock } from '../../context/LockContext';
+import { DEFAULT_NOTEBOOK_ID } from '../../types';
 import type { MainStackParamList } from '../../navigation/types';
 import type { Note, NoteAttachment } from '../../types';
 
@@ -126,6 +133,7 @@ export function NoteEditorScreen() {
         updatedAt: now,
         attachment,
         locked: pendingLock,
+        notebookId: route.params?.notebookId ?? DEFAULT_NOTEBOOK_ID,
       };
       dispatch(addNote(note));
       // Keep it viewable this session for the user who just created it.
@@ -136,22 +144,27 @@ export function NoteEditorScreen() {
 
   const onDelete = () => {
     if (!existing) return;
-    Alert.alert('Delete note?', 'This can’t be undone.', [
+    Alert.alert('Delete note?', 'Moved to Recently deleted for 30 days.', [
       { text: 'Cancel', style: 'cancel' },
       {
         text: 'Delete',
         style: 'destructive',
         onPress: async () => {
           savedRef.current = true;
-          await Promise.allSettled([
-            removeAttachment(originalPath.current),
-            ...pickedPaths.current.map((p) => removeAttachment(p)),
-          ]);
-          dispatch(deleteNote(existing.id));
+          // Soft delete — the note (and its saved attachment) is kept so it can
+          // be restored. Only clean up files picked in THIS session that were
+          // never persisted; the note's original attachment stays for restore.
+          await Promise.allSettled(pickedPaths.current.map((p) => removeAttachment(p)));
+          dispatch(trashNotes([existing.id]));
           navigation.goBack();
         },
       },
     ]);
+  };
+
+  const onTogglePin = () => {
+    if (!existing) return;
+    dispatch(setNotePinned({ id: existing.id, pinned: !existing.pinned }));
   };
 
   // ── Lock/unlock controls ────────────────────────────────────────────────
@@ -243,6 +256,16 @@ export function NoteEditorScreen() {
             // can be set the moment you create a note — not only after saving,
             // leaving, and reopening it. Labelled so it isn't a bare emoji.
             <View style={styles.headerActions}>
+              {existing && (
+                <PressScale
+                  onPress={onTogglePin}
+                  style={styles.iconBtn}
+                  accessibilityRole="button"
+                  accessibilityLabel={existing.pinned ? 'Unpin note' : 'Pin note'}
+                >
+                  <Text style={[styles.lockGlyph, !existing.pinned && { opacity: 0.4 }]}>📌</Text>
+                </PressScale>
+              )}
               <PressScale
                 onPress={onToggleLock}
                 style={styles.lockBtn}
