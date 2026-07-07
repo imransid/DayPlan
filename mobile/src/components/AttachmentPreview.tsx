@@ -5,12 +5,12 @@ import {
   Image,
   StyleSheet,
   Pressable,
-  Modal,
   ActivityIndicator,
 } from 'react-native';
 import Video from 'react-native-video';
 
 import { PressScale } from './UI';
+import { AppModal } from './AppModal';
 import { InlineAudioPlayer } from './InlineAudioPlayer';
 import { absoluteUri } from '../services/attachmentStorage';
 import { colors, glass, radius, spacing, fontSize, elevation } from '../theme';
@@ -103,26 +103,19 @@ function ImageAttachment({ uri, attachment }: { uri: string; attachment: NoteAtt
         />
       </Pressable>
 
-      <Modal
-        visible={zoomed}
-        transparent
-        animationType="fade"
-        statusBarTranslucent
-        onRequestClose={() => setZoomed(false)}
-      >
-        <Pressable style={styles.viewerBackdrop} onPress={() => setZoomed(false)}>
+      <AppModal visible={zoomed} onClose={() => setZoomed(false)} variant="full">
+        <Pressable style={styles.viewerFull} onPress={() => setZoomed(false)}>
           <Image
             source={{ uri }}
             style={styles.viewerImage}
             resizeMode="contain"
             resizeMethod="resize"
-            onError={() => {
-              setZoomed(false);
-              setFailed(true);
-            }}
+            // Only close the viewer; the thumbnail already decoded fine, so
+            // don't collapse it to the error placeholder too.
+            onError={() => setZoomed(false)}
           />
         </Pressable>
-      </Modal>
+      </AppModal>
     </>
   );
 }
@@ -248,12 +241,7 @@ const styles = StyleSheet.create({
     borderRadius: 1,
     backgroundColor: '#fff',
   },
-  // ── Full-screen image viewer ──
-  viewerBackdrop: {
-    flex: 1,
-    backgroundColor: 'rgba(8, 6, 18, 0.94)',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
+  // ── Full-screen image viewer (AppModal 'full' provides the dark backdrop) ──
+  viewerFull: { flex: 1, alignItems: 'center', justifyContent: 'center' },
   viewerImage: { width: '100%', height: '100%' },
 });

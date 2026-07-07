@@ -11,6 +11,7 @@ import { colors } from './src/theme';
 import { LiquidGlassBackground } from './src/components/LiquidGlassBackground';
 import { ErrorBoundary } from './src/components/ErrorBoundary';
 import { LockProvider } from './src/context/LockContext';
+import { PortalProvider } from './src/components/ModalPortal';
 import { registerAlarmActionHandler } from './src/services/notifications';
 import { registerScheduledPostHandler } from './src/services/scheduledPosts';
 import { checkForUpdate } from './src/services/appUpdate';
@@ -56,11 +57,13 @@ export default function App() {
             <PersistGate loading={<Loading />} persistor={persistor}>
               <SafeAreaProvider>
                 <StatusBar barStyle="dark-content" backgroundColor="transparent" translucent />
-                <ErrorBoundary>
-                  <LockProvider>
-                    <RootNavigator />
-                  </LockProvider>
-                </ErrorBoundary>
+                <PortalProvider>
+                  <ErrorBoundary>
+                    <LockProvider>
+                      <RootNavigator />
+                    </LockProvider>
+                  </ErrorBoundary>
+                </PortalProvider>
               </SafeAreaProvider>
             </PersistGate>
           </Provider>

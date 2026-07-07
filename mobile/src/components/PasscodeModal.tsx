@@ -1,15 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
-import {
-  Modal,
-  View,
-  Text,
-  TextInput,
-  StyleSheet,
-  Pressable,
-  KeyboardAvoidingView,
-  Platform,
-} from 'react-native';
+import { View, Text, TextInput, StyleSheet, Pressable, Platform } from 'react-native';
 
+import { AppModal } from './AppModal';
 import { colors, spacing, radius, fontSize, elevation } from '../theme';
 
 type Mode = 'set' | 'enter';
@@ -120,18 +112,8 @@ export function PasscodeModal({
   const canSubmit = currentValue.length >= (mode === 'enter' ? 1 : MIN_LEN);
 
   return (
-    <Modal
-      visible={visible}
-      transparent
-      animationType="fade"
-      statusBarTranslucent
-      onRequestClose={onClose}
-    >
-      <KeyboardAvoidingView
-        style={styles.backdrop}
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-      >
-        <View style={styles.card}>
+    <AppModal visible={visible} onClose={onClose} variant="center">
+      <View style={styles.card}>
           <Text style={styles.lockGlyph}>🔒</Text>
           <Text style={styles.title}>{heading}</Text>
           <Text style={styles.sub}>{sub}</Text>
@@ -177,8 +159,7 @@ export function PasscodeModal({
             </Pressable>
           </View>
         </View>
-      </KeyboardAvoidingView>
-    </Modal>
+    </AppModal>
   );
 }
 

@@ -1,20 +1,12 @@
-import React, { useMemo, useState } from 'react';
-import {
-  Modal,
-  View,
-  Text,
-  StyleSheet,
-  Pressable,
-  TextInput,
-  ScrollView,
-  Alert,
-} from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import React, { useEffect, useMemo, useState } from 'react';
+import { View, Text, StyleSheet, Pressable, TextInput, ScrollView, Alert } from 'react-native';
 
 import { PressScale } from '../../components/UI';
+import { AppModal } from '../../components/AppModal';
 import { colors, spacing, radius, fontSize, elevation } from '../../theme';
 import { useAppSelector, useAppDispatch } from '../../store/hooks';
 import {
+  DEFAULT_NOTEBOOK,
   createNotebook,
   renameNotebook,
   deleteNotebook,
@@ -49,11 +41,25 @@ export function NotebooksSheet({
   lockedCount,
 }: Props) {
   const dispatch = useAppDispatch();
-  const notebooks = useAppSelector((s) => s.notes.notebooks ?? []);
+  const notebooks = useAppSelector((s) => s.notes.notebooks ?? [DEFAULT_NOTEBOOK]);
   const items = useAppSelector((s) => s.notes.items);
 
   const [creating, setCreating] = useState(false);
   const [name, setName] = useState('');
+  const [renameId, setRenameId] = useState<string | null>(null);
+  const [renameText, setRenameText] = useState('');
+
+  // The sheet stays mounted (only `visible` toggles), so reset its transient
+  // edit state each time it closes — otherwise a half-typed create/rename
+  // reappears next open.
+  useEffect(() => {
+    if (!visible) {
+      setCreating(false);
+      setName('');
+      setRenameId(null);
+      setRenameText('');
+    }
+  }, [visible]);
 
   const moving = !!moveIds && moveIds.length > 0;
 
@@ -96,17 +102,24 @@ export function NotebooksSheet({
     }
   };
 
+  const submitRename = () => {
+    const trimmed = renameText.trim();
+    if (renameId && trimmed) dispatch(renameNotebook({ id: renameId, name: trimmed }));
+    setRenameId(null);
+    setRenameText('');
+  };
+
   const onLongPressNotebook = (id: string, currentName: string) => {
     if (id === DEFAULT_NOTEBOOK_ID) return;
+    // Rename via an inline TextInput (Alert.prompt is iOS-only, so it was a
+    // silent no-op on Android). Delete stays a confirm dialog.
     Alert.alert(currentName, undefined, [
       {
         text: 'Rename',
-        onPress: () =>
-          Alert.prompt
-            ? Alert.prompt('Rename notebook', undefined, (t) => {
-                if (t?.trim()) dispatch(renameNotebook({ id, name: t.trim() }));
-              }, 'plain-text', currentName)
-            : dispatch(renameNotebook({ id, name: currentName })),
+        onPress: () => {
+          setRenameId(id);
+          setRenameText(currentName);
+        },
       },
       {
         text: 'Delete notebook',
@@ -126,18 +139,17 @@ export function NotebooksSheet({
   };
 
   return (
-    <Modal visible={visible} animationType="slide" onRequestClose={onClose} transparent>
-      <View style={styles.backdrop}>
-        <SafeAreaView style={styles.sheet} edges={['top', 'bottom']}>
-          <View style={styles.header}>
-            <Pressable onPress={onClose} hitSlop={10} style={styles.closeBtn}>
-              <Text style={styles.closeGlyph}>✕</Text>
-            </Pressable>
-            <Text style={styles.headerTitle}>{moving ? 'Move to notebook' : 'Notebooks'}</Text>
-            <View style={styles.closeBtn} />
-          </View>
+    <AppModal visible={visible} onClose={onClose} variant="sheet" contentStyle={styles.sheet}>
+      <View style={styles.grabber} />
+      <View style={styles.header}>
+        <Pressable onPress={onClose} hitSlop={10} style={styles.closeBtn}>
+          <Text style={styles.closeGlyph}>✕</Text>
+        </Pressable>
+        <Text style={styles.headerTitle}>{moving ? 'Move to notebook' : 'Notebooks'}</Text>
+        <View style={styles.closeBtn} />
+      </View>
 
-          <ScrollView contentContainerStyle={{ padding: spacing.lg }}>
+      <ScrollView style={styles.scroll} contentContainerStyle={{ paddingHorizontal: spacing.lg, paddingBottom: spacing.md }}>
             {!moving && (
               <Row
                 label="All notes"
@@ -177,17 +189,39 @@ export function NotebooksSheet({
                   </Pressable>
                 </View>
               )}
-              {notebooks.map((nb, i) => (
-                <Row
-                  key={nb.id}
-                  label={nb.name}
-                  icon="📓"
-                  trailing={String(counts.map[nb.id] ?? 0)}
-                  divider={i < notebooks.length - 1}
-                  onPress={() => pickNotebook(nb.id)}
-                  onLongPress={() => onLongPressNotebook(nb.id, nb.name)}
-                />
-              ))}
+              {notebooks.map((nb, i) =>
+                renameId === nb.id ? (
+                  <View
+                    key={nb.id}
+                    style={[styles.createRow, i < notebooks.length - 1 && { borderBottomWidth: 0 }]}
+                  >
+                    <TextInput
+                      value={renameText}
+                      onChangeText={setRenameText}
+                      placeholder="Notebook name"
+                      placeholderTextColor={colors.textMuted}
+                      style={styles.createInput}
+                      autoFocus
+                      onSubmitEditing={submitRename}
+                      returnKeyType="done"
+                      maxLength={40}
+                    />
+                    <Pressable onPress={submitRename} hitSlop={8}>
+                      <Text style={styles.createSave}>Save</Text>
+                    </Pressable>
+                  </View>
+                ) : (
+                  <Row
+                    key={nb.id}
+                    label={nb.name}
+                    icon="📓"
+                    trailing={String(counts.map[nb.id] ?? 0)}
+                    divider={i < notebooks.length - 1}
+                    onPress={() => pickNotebook(nb.id)}
+                    onLongPress={() => onLongPressNotebook(nb.id, nb.name)}
+                  />
+                ),
+              )}
             </View>
 
             {!moving && (
@@ -211,9 +245,7 @@ export function NotebooksSheet({
               </View>
             )}
           </ScrollView>
-        </SafeAreaView>
-      </View>
-    </Modal>
+    </AppModal>
   );
 }
 
@@ -256,8 +288,24 @@ function Row({
 }
 
 const styles = StyleSheet.create({
-  backdrop: { flex: 1, backgroundColor: colors.bg },
-  sheet: { flex: 1 },
+  sheet: {
+    backgroundColor: colors.bg,
+    borderTopLeftRadius: radius.xl,
+    borderTopRightRadius: radius.xl,
+    maxHeight: '90%',
+    paddingTop: spacing.sm,
+  },
+  grabber: {
+    width: 40,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: colors.textDisabled,
+    alignSelf: 'center',
+    marginBottom: spacing.xs,
+  },
+  // flexShrink lets the list scroll INSIDE the maxHeight-capped sheet (RN
+  // ScrollViews default to flexShrink:0 and would otherwise overflow).
+  scroll: { flexShrink: 1 },
   header: {
     flexDirection: 'row',
     alignItems: 'center',

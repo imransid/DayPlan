@@ -28,12 +28,15 @@ import { AnimatedTaskRow } from '../../components/AnimatedTaskRow';
 import { AnimatedFab } from '../../components/AnimatedFab';
 import { AnimatedProgressBar, AnimatedNumber } from '../../components/AnimatedProgress';
 import { colors, spacing, radius, motion, elevation } from '../../theme';
+import * as RNLocalize from 'react-native-localize';
 import {
   useGetTasksQuery,
   useToggleTaskMutation,
   useDeleteTaskMutation,
   useRolloverTasksMutation,
   useRunMyScheduledPostsMutation,
+  useGetMeQuery,
+  useUpdateProfileMutation,
 } from '../../store/api/api';
 import { syncHourlyAlarms } from '../../services/notifications';
 import { utcTaskDayStartIso, localCalendarDateKey } from '../../utils/utcTaskDay';
@@ -51,6 +54,27 @@ export function HomeScreen() {
   const [deleteTask] = useDeleteTaskMutation();
   const [rolloverTasks] = useRolloverTasksMutation();
   const [runMyScheduledPosts] = useRunMyScheduledPostsMutation();
+
+  // Keep the user's stored profile timezone matching the device. The scheduler
+  // computes each user's "due" time and idempotency day in their PROFILE tz, so
+  // if the device tz drifts from it (travel, wrong tz at signup), posts and the
+  // task-day would be off. Patch once per session; the ref guard prevents a loop
+  // (a successful patch updates `me.timezone`, so the condition stops matching).
+  const { data: me } = useGetMeQuery();
+  const [updateProfile] = useUpdateProfileMutation();
+  const didSyncTz = useRef(false);
+  useEffect(() => {
+    if (didSyncTz.current || !me) return;
+    const device = RNLocalize.getTimeZone();
+    if (device && me.timezone !== device) {
+      didSyncTz.current = true;
+      updateProfile({ timezone: device })
+        .unwrap()
+        .catch(() => {
+          didSyncTz.current = false;
+        });
+    }
+  }, [me, updateProfile]);
 
   // Nudge the backend to send any of this user's DUE scheduled Discord posts.
   // Fire-and-forget + idempotent, so it's safe to call on cold start and every
@@ -137,14 +161,14 @@ export function HomeScreen() {
   //     the next change here, and Settings already cancelled directly.
   // Permission is handled at the Settings toggle, not here, so this can
   // run silently in the background without surfacing a permission prompt.
+  //
+  // `dayKey` is in the deps because the schedule is TODAY-only: when the local
+  // calendar day flips, we must re-schedule the new day's hours (otherwise the
+  // alarm silently stops after the first day if the pending count is unchanged).
+  const dayKey = localCalendarDateKey();
   useEffect(() => {
     syncHourlyAlarms(pendingCount).catch(() => undefined);
-  }, [pendingCount]);
-
-  // Recompute the header date only when the local calendar day actually flips
-  // (not on every render). localCalendarDateKey() is cheap and its value is
-  // stable within a day, so an app left open across midnight still updates.
-  const dayKey = localCalendarDateKey();
+  }, [pendingCount, dayKey]);
   const dateLabel = useMemo(
     () =>
       DateTime.local().toLocaleString({

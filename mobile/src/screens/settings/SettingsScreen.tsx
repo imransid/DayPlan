@@ -47,6 +47,8 @@ import {
   scheduleAutoPosts,
   type AutoPostConfig,
 } from '../../services/scheduledPosts';
+import { checkForUpdate } from '../../services/appUpdate';
+import { APP_BUILD } from '../../appVersion';
 import { utcTaskDayStartIso } from '../../utils/utcTaskDay';
 import type { MainStackParamList } from '../../navigation/types';
 
@@ -100,6 +102,15 @@ export function SettingsScreen({ navigation }: Props) {
       scheduleAutoPosts(goalPostTime, workUpdateTime).catch(() => undefined);
     }
   }, [autoPostLoaded, autoPost.enabled, goalPostTime, workUpdateTime]);
+
+  // Re-schedule the hourly alarm when the pending-task count resolves (tasks
+  // load as [] first) so enabling it on Settings — without visiting Home —
+  // actually schedules with an accurate count instead of a no-op at count 0.
+  useEffect(() => {
+    if (alarmLoaded && alarm.enabled) {
+      syncHourlyAlarms(pendingCount).catch(() => undefined);
+    }
+  }, [alarmLoaded, alarm.enabled, pendingCount]);
 
   const handleLogout = () => {
     Alert.alert('Sign out', 'Are you sure?', [
@@ -202,6 +213,17 @@ export function SettingsScreen({ navigation }: Props) {
     },
     [goalPostTime, workUpdateTime],
   );
+
+  const [checkingUpdate, setCheckingUpdate] = useState(false);
+  const handleCheckUpdate = async () => {
+    setCheckingUpdate(true);
+    try {
+      // silent: false → shows "Up to date" / "Update available" either way.
+      await checkForUpdate({ silent: false });
+    } finally {
+      setCheckingUpdate(false);
+    }
+  };
 
   const handleOpenAlarmSound = () => {
     openAlarmSoundSettings().catch(() => {
@@ -407,14 +429,26 @@ export function SettingsScreen({ navigation }: Props) {
               label="Integrations"
               value="Manage"
               onPress={() => navigation.navigate('Integrations')}
-              last
+              last={Platform.OS !== 'android'}
             />
+            {Platform.OS === 'android' && (
+              <SettingsRow
+                label="Check for updates"
+                sub="Download & install the latest build from GitHub"
+                loading={checkingUpdate}
+                onPress={handleCheckUpdate}
+                action
+                last
+              />
+            )}
           </View>
         </Animated.View>
 
         {/* ── About + Sign out ─────────────────────────────── */}
         <Animated.View entering={stagger(5)} style={styles.footer}>
-          <Text style={styles.footerVersion}>DayPlan · v1.0.0</Text>
+          <Text style={styles.footerVersion}>
+            DayPlan · v1.0.0 (build {APP_BUILD})
+          </Text>
 
           <PressScale
             onPress={handleLogout}

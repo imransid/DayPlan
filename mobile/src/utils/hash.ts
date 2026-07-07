@@ -26,15 +26,23 @@ function utf8Bytes(str: string): number[] {
         0x80 | (code & 0x3f),
       );
     } else {
-      // UTF-16 surrogate pair → single code point
-      i++;
-      code = 0x10000 + (((code & 0x3ff) << 10) | (str.charCodeAt(i) & 0x3ff));
-      bytes.push(
-        0xf0 | (code >> 18),
-        0x80 | ((code >> 12) & 0x3f),
-        0x80 | ((code >> 6) & 0x3f),
-        0x80 | (code & 0x3f),
-      );
+      // UTF-16 surrogate. Only a HIGH surrogate (0xD800–0xDBFF) followed by a
+      // LOW surrogate (0xDC00–0xDFFF) is a valid pair; a lone/low surrogate
+      // (e.g. a truncated emoji at the end) → U+FFFD, instead of reading a NaN
+      // charCode past the end and emitting garbage bytes.
+      const next = i + 1 < str.length ? str.charCodeAt(i + 1) : 0;
+      if (code <= 0xdbff && next >= 0xdc00 && next <= 0xdfff) {
+        i++;
+        code = 0x10000 + (((code & 0x3ff) << 10) | (next & 0x3ff));
+        bytes.push(
+          0xf0 | (code >> 18),
+          0x80 | ((code >> 12) & 0x3f),
+          0x80 | ((code >> 6) & 0x3f),
+          0x80 | (code & 0x3f),
+        );
+      } else {
+        bytes.push(0xef, 0xbf, 0xbd); // U+FFFD replacement character
+      }
     }
   }
   return bytes;

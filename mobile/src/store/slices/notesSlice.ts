@@ -11,7 +11,7 @@ interface NotesState {
   viewMode: NotesViewMode;
 }
 
-const DEFAULT_NOTEBOOK: Notebook = {
+export const DEFAULT_NOTEBOOK: Notebook = {
   id: DEFAULT_NOTEBOOK_ID,
   name: 'Default notebook',
   createdAt: '1970-01-01T00:00:00.000Z',
@@ -29,9 +29,10 @@ function now(): string {
 
 /**
  * Local-first notes store. Persisted via redux-persist (see store.ts whitelist).
- * redux-persist's autoMergeLevel1 seeds `notebooks`/`viewMode` from initialState
- * for users upgrading from the pre-notebooks shape, and notes persisted before
- * these fields existed default via the `?? ` fallbacks in selectors.
+ * redux-persist's default reconciler replaces the whole slice with the persisted
+ * shape, so for users who persisted before `notebooks`/`viewMode` existed those
+ * fields are undefined after rehydration. The notebook reducers below seed the
+ * default defensively, and read paths fall back to `[DEFAULT_NOTEBOOK]`/'grid'.
  *
  * Reducers stay PURE — soft-deleting flips `deletedAt`, but the on-disk
  * attachment file is only removed when a note is PERMANENTLY deleted, by the
@@ -99,11 +100,13 @@ const notesSlice = createSlice({
       });
     },
     createNotebook(state, action: PayloadAction<{ id: string; name: string }>) {
+      if (!state.notebooks) state.notebooks = [DEFAULT_NOTEBOOK];
       const name = action.payload.name.trim();
       if (!name) return;
       state.notebooks.push({ id: action.payload.id, name, createdAt: now() });
     },
     renameNotebook(state, action: PayloadAction<{ id: string; name: string }>) {
+      if (!state.notebooks) state.notebooks = [DEFAULT_NOTEBOOK];
       const nb = state.notebooks.find((n) => n.id === action.payload.id);
       const name = action.payload.name.trim();
       if (nb && name) nb.name = name;
@@ -111,6 +114,7 @@ const notesSlice = createSlice({
     deleteNotebook(state, action: PayloadAction<string>) {
       // Never delete the default notebook. Its notes fall back to default.
       if (action.payload === DEFAULT_NOTEBOOK_ID) return;
+      if (!state.notebooks) state.notebooks = [DEFAULT_NOTEBOOK];
       state.notebooks = state.notebooks.filter((n) => n.id !== action.payload);
       state.items.forEach((n) => {
         if (n.notebookId === action.payload) n.notebookId = DEFAULT_NOTEBOOK_ID;
