@@ -27,6 +27,7 @@ class MockLocationModule(reactContext: ReactApplicationContext) :
     NativeMockLocationSpec(reactContext) {
 
     private var unsubscribe: (() -> Unit)? = null
+    private var unsubscribeProgress: (() -> Unit)? = null
 
     // getName() is not overridden: the generated spec already returns NAME.
 
@@ -45,11 +46,14 @@ class MockLocationModule(reactContext: ReactApplicationContext) :
         }
 
         unsubscribe = MockLocationStatusBus.subscribe(::emitStatus)
+        unsubscribeProgress = MockLocationStatusBus.subscribeProgress(::emitProgress)
     }
 
     override fun invalidate() {
         unsubscribe?.invoke()
         unsubscribe = null
+        unsubscribeProgress?.invoke()
+        unsubscribeProgress = null
         super.invalidate()
     }
 
@@ -65,6 +69,132 @@ class MockLocationModule(reactContext: ReactApplicationContext) :
                 .emit(EVENT_STATUS_CHANGED, payload)
         }.onFailure { Log.w(MockLocationEngine.TAG, "failed to emit status to JS", it) }
     }
+
+    /**
+     * Called from the injector thread about once a second.
+     *
+     * Returns immediately when no React instance is attached, so a backgrounded
+     * or torn-down JS context never costs the injection loop anything.
+     */
+    private fun emitProgress(progress: MockProgress) {
+        val ctx = reactApplicationContext
+        if (!ctx.hasActiveReactInstance()) return
+        val payload = Arguments.createMap().apply {
+            putDouble("fraction", progress.fraction)
+            putDouble("metresTravelled", progress.metresTravelled)
+            putDouble("metresRemaining", progress.metresRemaining)
+            putDouble("speedMps", progress.speedMps.toDouble())
+            putDouble("bearingDegrees", progress.bearingDegrees.toDouble())
+            if (progress.etaMs != null) putDouble("etaMs", progress.etaMs.toDouble())
+            else putNull("etaMs")
+            putDouble("latitude", progress.latitude)
+            putDouble("longitude", progress.longitude)
+            putBoolean("finished", progress.finished)
+        }
+        runCatching {
+            ctx.getJSModule(DeviceEventManagerModule.RCTDeviceEventEmitter::class.java)
+                .emit(EVENT_PROGRESS, payload)
+        }
+    }
+
+    /**
+     * The gates start() and startRoute() share.
+     *
+     * @return an error code and message, or null when everything is in place.
+     */
+    private fun blockingPrecondition(): Pair<String, String>? {
+        val ctx = reactApplicationContext
+        return when {
+            !MockLocationEngine.hasFineLocationPermission(ctx) ->
+                E_PERMISSION to MockLocationEngine.PERMISSION_MESSAGE
+            !MockLocationEngine.hasNotificationPermission(ctx) ->
+                E_NOTIFICATIONS to MockLocationEngine.NOTIFICATION_MESSAGE
+            !MockLocationEngine.areNotificationsDeliverable(ctx) ->
+                E_NOTIFICATIONS to MockLocationEngine.NOTIFICATION_BLOCKED_MESSAGE
+            !MockLocationEngine.isMockAppSelected(ctx) ->
+                E_NOT_SELECTED to MockLocationEngine.NOT_SELECTED_MESSAGE
+            else -> null
+        }
+    }
+
+    /**
+     * Straight-line route between two points.
+     *
+     * Geometry is generated here and written to internal storage rather than
+     * passed through the Intent: a 10k-point route is ~160 KB of doubles, close
+     * enough to the Binder transaction limit to be a bad idea. The service reads
+     * it back by session id. Road geometry in step 4 substitutes the points and
+     * changes nothing else.
+     */
+    override fun startRoute(options: ReadableMap, promise: Promise) {
+        val ctx = reactApplicationContext
+
+        blockingPrecondition()?.let { (code, message) ->
+            promise.reject(code, message)
+            return
+        }
+
+        val startLat = options.optDouble("startLatitude")
+        val startLng = options.optDouble("startLongitude")
+        val endLat = options.optDouble("endLatitude")
+        val endLng = options.optDouble("endLongitude")
+        if (startLat == null || startLng == null || endLat == null || endLng == null) {
+            promise.reject(E_INVALID_OPTIONS, "A route needs both a start and an end point.")
+            return
+        }
+
+        val template = try {
+            MockTarget.fromReadableMap(
+                Arguments.createMap().apply {
+                    merge(options)
+                    putDouble(MockTarget.KEY_LAT, startLat)
+                    putDouble(MockTarget.KEY_LNG, startLng)
+                }
+            )
+        } catch (e: IllegalArgumentException) {
+            promise.reject(E_INVALID_OPTIONS, e.message, e)
+            return
+        }
+
+        val geometry = try {
+            RouteGeometry.straightLine(startLat, startLng, endLat, endLng)
+        } catch (e: IllegalArgumentException) {
+            promise.reject(E_INVALID_OPTIONS, e.message, e)
+            return
+        }
+
+        val sessionId = "r${System.currentTimeMillis()}"
+        if (!MockLocationStore.writeRoute(ctx, sessionId, geometry.toFlatArray())) {
+            promise.reject(E_SERVICE, "Couldn't save the route to this device's storage.")
+            return
+        }
+
+        val speedKmh = options.optDouble("speedKmh") ?: MockLocationService.DEFAULT_SPEED_KMH
+        if (speedKmh <= 0.0) {
+            promise.reject(E_INVALID_OPTIONS, "Speed must be greater than 0 km/h.")
+            return
+        }
+
+        try {
+            MockLocationService.startRoute(
+                context = ctx,
+                sessionId = sessionId,
+                template = template,
+                endBehaviour = RouteEndBehaviour.parse(options.optString("endBehaviour")).name,
+                speedKmh = speedKmh,
+            )
+            promise.resolve(null)
+        } catch (e: Throwable) {
+            Log.e(MockLocationEngine.TAG, "could not start the route service", e)
+            promise.reject(E_SERVICE, e.message ?: "Android wouldn't start the route.", e)
+        }
+    }
+
+    private fun ReadableMap.optDouble(key: String): Double? =
+        if (hasKey(key) && !isNull(key)) getDouble(key) else null
+
+    private fun ReadableMap.optString(key: String): String? =
+        if (hasKey(key) && !isNull(key)) getString(key) else null
 
     // ── Status ───────────────────────────────────────────────────────────────
 
@@ -97,26 +227,11 @@ class MockLocationModule(reactContext: ReactApplicationContext) :
             return
         }
 
-        if (!MockLocationEngine.hasFineLocationPermission(ctx)) {
-            promise.reject(E_PERMISSION, MockLocationEngine.PERMISSION_MESSAGE)
-            return
-        }
-        // Separate code from E_PERMISSION: the UI has to prompt for a different
-        // permission, and on API 33+ this one is commonly already denied because
-        // notifee only asks for it inside the alarm flow.
-        if (!MockLocationEngine.hasNotificationPermission(ctx)) {
-            promise.reject(E_NOTIFICATIONS, MockLocationEngine.NOTIFICATION_MESSAGE)
-            return
-        }
-        // Same code, different remedy: the permission is granted but the app or
-        // the channel is switched off, so the UI must route to notification
-        // settings instead of re-prompting.
-        if (!MockLocationEngine.areNotificationsDeliverable(ctx)) {
-            promise.reject(E_NOTIFICATIONS, MockLocationEngine.NOTIFICATION_BLOCKED_MESSAGE)
-            return
-        }
-        if (!MockLocationEngine.isMockAppSelected(ctx)) {
-            promise.reject(E_NOT_SELECTED, MockLocationEngine.NOT_SELECTED_MESSAGE)
+        // E_MOCK_NOTIFICATIONS covers two different remedies — re-prompt when
+        // the runtime permission is missing, notification settings when the app
+        // or channel is switched off — which is why the messages differ.
+        blockingPrecondition()?.let { (code, message) ->
+            promise.reject(code, message)
             return
         }
 
@@ -283,6 +398,7 @@ class MockLocationModule(reactContext: ReactApplicationContext) :
         val NAME: String = NativeMockLocationSpec.NAME
 
         const val EVENT_STATUS_CHANGED = "mockLocationStatusChanged"
+        const val EVENT_PROGRESS = "mockLocationProgress"
 
         // Stable across versions — src/services/mockLocation.ts branches on these.
         const val E_INVALID_OPTIONS = "E_MOCK_INVALID_OPTIONS"

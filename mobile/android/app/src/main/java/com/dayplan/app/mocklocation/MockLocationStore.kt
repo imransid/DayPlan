@@ -1,6 +1,8 @@
 package com.dayplan.app.mocklocation
 
 import android.content.Context
+import android.util.Log
+import java.io.File
 
 /**
  * Survives process death and reboots so we can answer two questions on the next
@@ -20,6 +22,34 @@ internal object MockLocationStore {
      * surfaces a "resume?" prompt on next launch.
      */
     private const val KEY_BOOT_INTERRUPTED = "bootInterrupted"
+
+    // ── Route session ────────────────────────────────────────────────────────
+    private const val KEY_SESSION_ID = "sessionId"
+    private const val KEY_MODE = "mode"
+    private const val KEY_END_BEHAVIOUR = "endBehaviour"
+    private const val KEY_SPEED_KMH = "speedKmh"
+
+    /**
+     * The session's elapsed-realtime baseline, written once at start.
+     *
+     * This — not a periodically-updated travelled distance — is what a sticky
+     * restart restores, so recovery costs no per-tick disk writes and the clock
+     * stays the single source of truth. See docs/mock-location.md.
+     */
+    private const val KEY_START_REALTIME = "startRealtime"
+
+    /**
+     * Wall clock at start, stored only as a cross-check. elapsedRealtime resets
+     * on boot, so a stored baseline greater than the current elapsed realtime
+     * proves a reboot happened.
+     */
+    private const val KEY_START_WALL_CLOCK = "startWallClock"
+
+    private const val ROUTE_PREFIX = "mock-route-"
+    private const val ROUTE_SUFFIX = ".json"
+
+    const val MODE_STATIC = "STATIC"
+    const val MODE_ROUTE = "ROUTE"
 
     private fun prefs(context: Context) =
         context.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
@@ -64,6 +94,103 @@ internal object MockLocationStore {
             intervalMs = p.getLong(MockTarget.KEY_INTERVAL, MockTarget.DEFAULT_INTERVAL_MS),
             label = p.getString(MockTarget.KEY_LABEL, null),
         )
+    }
+
+    /** Records the clocks and route settings that survive process death. */
+    fun saveSessionClock(
+        context: Context,
+        sessionId: String,
+        mode: String,
+        startRealtime: Long,
+        startWallClock: Long,
+        endBehaviour: String?,
+        speedKmh: Double?,
+    ) {
+        prefs(context).edit()
+            .putString(KEY_SESSION_ID, sessionId)
+            .putString(KEY_MODE, mode)
+            .putLong(KEY_START_REALTIME, startRealtime)
+            .putLong(KEY_START_WALL_CLOCK, startWallClock)
+            .putString(KEY_END_BEHAVIOUR, endBehaviour)
+            .putString(KEY_SPEED_KMH, speedKmh?.toString())
+            .apply()
+    }
+
+    fun sessionId(context: Context): String? =
+        prefs(context).getString(KEY_SESSION_ID, null)
+
+    fun mode(context: Context): String =
+        prefs(context).getString(KEY_MODE, MODE_STATIC) ?: MODE_STATIC
+
+    fun startRealtime(context: Context): Long =
+        prefs(context).getLong(KEY_START_REALTIME, 0L)
+
+    fun startWallClock(context: Context): Long =
+        prefs(context).getLong(KEY_START_WALL_CLOCK, 0L)
+
+    fun endBehaviour(context: Context): String? =
+        prefs(context).getString(KEY_END_BEHAVIOUR, null)
+
+    fun speedKmh(context: Context): Double? =
+        prefs(context).getString(KEY_SPEED_KMH, null)?.toDoubleOrNull()
+
+    // ── Route geometry file ──────────────────────────────────────────────────
+
+    private fun routeFile(context: Context, sessionId: String): File =
+        File(context.applicationContext.filesDir, "$ROUTE_PREFIX$sessionId$ROUTE_SUFFIX")
+
+    /**
+     * Route points are far too large for SharedPreferences — 10k points is 20k
+     * doubles — so they go to internal storage as a flat [lat, lng, ...] array.
+     */
+    fun writeRoute(context: Context, sessionId: String, flat: DoubleArray): Boolean = try {
+        routeFile(context, sessionId).bufferedWriter().use { w ->
+            w.write("[")
+            for (i in flat.indices) {
+                if (i > 0) w.write(",")
+                w.write(flat[i].toString())
+            }
+            w.write("]")
+        }
+        true
+    } catch (t: Throwable) {
+        Log.w(MockLocationEngine.TAG, "could not write the route file", t)
+        false
+    }
+
+    fun readRoute(context: Context, sessionId: String): DoubleArray? = try {
+        val text = routeFile(context, sessionId).readText().trim()
+        if (!text.startsWith("[") || !text.endsWith("]")) {
+            null
+        } else {
+            val body = text.substring(1, text.length - 1)
+            if (body.isBlank()) null
+            else body.split(',').map { it.trim().toDouble() }.toDoubleArray()
+        }
+    } catch (t: Throwable) {
+        Log.w(MockLocationEngine.TAG, "could not read the route file", t)
+        null
+    }
+
+    /**
+     * Removes every route file except [keepSessionId].
+     *
+     * Called on stop and again at process start, for the same reason the
+     * test-provider sweep is: a crash must not leave debris that only a visit to
+     * the feature screen would clean up.
+     */
+    fun sweepRouteFiles(context: Context, keepSessionId: String?) {
+        val dir = context.applicationContext.filesDir ?: return
+        val keep = keepSessionId?.let { "$ROUTE_PREFIX$it$ROUTE_SUFFIX" }
+        runCatching {
+            dir.listFiles { f ->
+                f.isFile && f.name.startsWith(ROUTE_PREFIX) && f.name.endsWith(ROUTE_SUFFIX)
+            }?.forEach { f ->
+                if (f.name != keep && f.delete()) {
+                    Log.i(MockLocationEngine.TAG, "swept stale route file ${f.name}")
+                }
+            }
+        }
     }
 
     fun setBootInterrupted(context: Context, value: Boolean) {

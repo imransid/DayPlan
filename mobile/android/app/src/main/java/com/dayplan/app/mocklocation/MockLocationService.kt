@@ -50,6 +50,17 @@ internal class MockLocationService : Service() {
     @Volatile
     private var session: Session? = null
 
+    /**
+     * Throttles, in elapsed-realtime millis. Progress goes to JS about once a
+     * second; the notification is rewritten far less often because redrawing it
+     * every second is a visible battery cost.
+     */
+    @Volatile
+    private var lastProgressPublish: Long = 0L
+
+    @Volatile
+    private var lastNotificationUpdate: Long = 0L
+
     @Volatile
     private var activeProviders: List<String> = emptyList()
 
@@ -95,10 +106,37 @@ internal class MockLocationService : Service() {
             } catch (t2: Throwable) {
                 Log.w(MockLocationEngine.TAG, "injection tick failed", t2)
             }
+            publishProgressThrottled(active, elapsedMs)
+
             // Re-checked *after* the push, not only before it: the session can
             // be torn down while we are injecting.
             if (!live) return
             injector?.postDelayed(this, t.intervalMs)
+        }
+    }
+
+    /**
+     * Emits progress to JS and, far less often, to the notification.
+     *
+     * Runs on the injector thread and must stay cheap: [MockLocationStatusBus]
+     * hands off without blocking, and the React module drops the event outright
+     * when no React instance is attached, so the loop is never gated on JS being
+     * present or responsive.
+     */
+    private fun publishProgressThrottled(active: Session, elapsedMs: Long) {
+        val progress = active.source.progressAt(elapsedMs) ?: return
+        val now = SystemClock.elapsedRealtime()
+
+        if (now - lastProgressPublish >= PROGRESS_INTERVAL_MS) {
+            lastProgressPublish = now
+            MockLocationStatusBus.publishProgress(progress)
+        }
+
+        // Arrival is worth showing immediately rather than up to 10s late.
+        val notable = progress.finished && lastNotificationUpdate != NOTIFICATION_ARRIVED
+        if (notable || now - lastNotificationUpdate >= NOTIFICATION_INTERVAL_MS) {
+            lastNotificationUpdate = if (progress.finished) NOTIFICATION_ARRIVED else now
+            main.post { updateNotification(active.seed, progress) }
         }
     }
 
@@ -128,7 +166,7 @@ internal class MockLocationService : Service() {
         }
 
         // A null intent means the system restarted us under START_STICKY after
-        // the process was killed. Recover the target from disk.
+        // the process was killed. Recover from disk.
         val requested = MockTarget.fromIntent(intent)
             ?: MockLocationStore.lastTarget(this)?.takeIf { MockLocationStore.isActive(this) }
 
@@ -143,12 +181,37 @@ internal class MockLocationService : Service() {
             return START_NOT_STICKY
         }
 
-        if (action == ACTION_UPDATE && isRunning) {
-            applyTarget(requested)
-        } else {
-            startSession(requested)
+        return when {
+            action == ACTION_UPDATE && isRunning -> {
+                applyTarget(requested)
+                START_STICKY
+            }
+
+            action == ACTION_START_ROUTE -> {
+                startRouteSession(
+                    // intent is smart-cast non-null here: a null intent would
+                    // have made `action` null, and this branch unreachable.
+                    sessionId = intent.getStringExtra(EXTRA_SESSION_ID)
+                        ?: return START_NOT_STICKY,
+                    template = requested,
+                    endBehaviour = RouteEndBehaviour.parse(
+                        intent.getStringExtra(EXTRA_END_BEHAVIOUR)
+                    ),
+                    speedKmh = intent.getDoubleExtra(EXTRA_SPEED_KMH, DEFAULT_SPEED_KMH),
+                    resumeFromRealtime = null,
+                )
+                START_STICKY
+            }
+
+            // Null intent + a persisted route session = sticky restart mid-route.
+            intent == null && MockLocationStore.mode(this) == MockLocationStore.MODE_ROUTE ->
+                recoverRouteSession(requested)
+
+            else -> {
+                startSession(requested)
+                START_STICKY
+            }
         }
-        return START_STICKY
     }
 
     /** @return false if we could not legally go foreground; the service is stopping. */
@@ -216,12 +279,18 @@ internal class MockLocationService : Service() {
         installSession(StaticFixSource(t), seed = t, rebaseClock = true)
         isRunning = true
         MockLocationStore.saveSession(this, t)
+        MockLocationStore.saveSessionClock(
+            context = this,
+            sessionId = "static",
+            mode = MockLocationStore.MODE_STATIC,
+            startRealtime = session?.startRealtime ?: SystemClock.elapsedRealtime(),
+            startWallClock = System.currentTimeMillis(),
+            endBehaviour = null,
+            speedKmh = null,
+        )
         val wakeLockWarning = acquireWakeLock()
 
-        if (injectorThread == null) {
-            injectorThread = HandlerThread("dayplan-mock-location").also { it.start() }
-            injector = Handler(injectorThread!!.looper)
-        }
+        ensureInjectorThread()
         restartInjection()
 
         Log.i(
@@ -230,6 +299,129 @@ internal class MockLocationService : Service() {
         )
         MockLocationStatusBus.publish(MockStatusEvent(MockStatus.RUNNING, wakeLockWarning))
         updateNotification(t)
+    }
+
+    /**
+     * Starts (or resumes) a route.
+     *
+     * @param resumeFromRealtime the original clock baseline when recovering from
+     * process death, so the route continues from where the elapsed time says it
+     * should be. Null starts a fresh traversal. See docs/mock-location.md.
+     */
+    private fun startRouteSession(
+        sessionId: String,
+        template: MockTarget,
+        endBehaviour: RouteEndBehaviour,
+        speedKmh: Double,
+        resumeFromRealtime: Long?,
+    ) {
+        val lm = locationManager
+        if (lm == null) {
+            stopSession(null, "This device has no location service.")
+            return
+        }
+
+        val flat = MockLocationStore.readRoute(this, sessionId)
+        if (flat == null || flat.size < 4) {
+            stopSession(null, "The route data is missing or unreadable.")
+            return
+        }
+
+        val geometry = try {
+            val n = flat.size / 2
+            val lat = DoubleArray(n) { flat[it * 2] }
+            val lng = DoubleArray(n) { flat[it * 2 + 1] }
+            RouteGeometry.fromPoints(lat, lng)
+        } catch (e: IllegalArgumentException) {
+            stopSession(null, e.message)
+            return
+        }
+
+        try {
+            activeProviders = MockLocationEngine.addProviders(lm)
+        } catch (e: MockLocationNotSelectedException) {
+            stopSession(MockStatus.NOT_SELECTED, e.message)
+            return
+        } catch (t2: Throwable) {
+            stopSession(null, t2.message)
+            return
+        }
+
+        val speed = ConstantSpeedModel.fromKmh(geometry.totalMetres, speedKmh)
+        val source = RouteFixSource(geometry, speed, endBehaviour, template)
+
+        val startRealtime = resumeFromRealtime ?: SystemClock.elapsedRealtime()
+        session = Session(source, startRealtime, template)
+        isRunning = true
+
+        MockLocationStore.saveSession(this, template)
+        MockLocationStore.saveSessionClock(
+            context = this,
+            sessionId = sessionId,
+            mode = MockLocationStore.MODE_ROUTE,
+            startRealtime = startRealtime,
+            startWallClock = System.currentTimeMillis(),
+            endBehaviour = endBehaviour.name,
+            speedKmh = speedKmh,
+        )
+        // Anything left from an earlier session is debris now.
+        MockLocationStore.sweepRouteFiles(this, keepSessionId = sessionId)
+
+        val wakeLockWarning = acquireWakeLock()
+        ensureInjectorThread()
+        restartInjection()
+
+        Log.i(
+            MockLocationEngine.TAG,
+            "route session $sessionId: ${geometry.pointCount} points, " +
+                "${geometry.totalMetres.toInt()} m, ${speed.totalDurationMs / 1000} s, " +
+                "$endBehaviour" + if (resumeFromRealtime != null) " (resumed)" else "",
+        )
+        MockLocationStatusBus.publish(MockStatusEvent(MockStatus.RUNNING, wakeLockWarning))
+        updateNotification(template)
+    }
+
+    /**
+     * START_STICKY recovery for a route.
+     *
+     * elapsedRealtime resets to ~0 on boot, so a stored baseline *greater* than
+     * the current elapsed realtime can only mean the device rebooted. That goes
+     * down the boot-interrupted path rather than silently resuming — the same
+     * rule the boot receiver applies.
+     */
+    private fun recoverRouteSession(template: MockTarget): Int {
+        val sessionId = MockLocationStore.sessionId(this)
+        val storedStart = MockLocationStore.startRealtime(this)
+
+        if (sessionId == null) {
+            stopSession(null, null)
+            return START_NOT_STICKY
+        }
+
+        if (storedStart > SystemClock.elapsedRealtime()) {
+            Log.i(MockLocationEngine.TAG, "reboot detected during a route; not resuming")
+            MockLocationStore.setBootInterrupted(this, true)
+            stopSession(null, null)
+            return START_NOT_STICKY
+        }
+
+        startRouteSession(
+            sessionId = sessionId,
+            template = template,
+            endBehaviour = RouteEndBehaviour.parse(MockLocationStore.endBehaviour(this)),
+            speedKmh = MockLocationStore.speedKmh(this) ?: DEFAULT_SPEED_KMH,
+            // The whole point: keep the original baseline so the route is where
+            // the clock says, not back at the start.
+            resumeFromRealtime = storedStart,
+        )
+        return START_STICKY
+    }
+
+    private fun ensureInjectorThread() {
+        if (injectorThread == null) {
+            injectorThread = HandlerThread("dayplan-mock-location").also { it.start() }
+            injector = Handler(injectorThread!!.looper)
+        }
     }
 
     /**
@@ -265,6 +457,9 @@ internal class MockLocationService : Service() {
         activeProviders = emptyList()
 
         MockLocationStore.clearSession(this)
+        MockLocationStore.sweepRouteFiles(this, keepSessionId = null)
+        lastProgressPublish = 0L
+        lastNotificationUpdate = 0L
         releaseWakeLock()
 
         injectorThread?.quitSafely()
@@ -350,7 +545,7 @@ internal class MockLocationService : Service() {
     private fun notificationManager(): NotificationManager? =
         MockLocationEngine.notificationManager(this)
 
-    private fun buildNotification(t: MockTarget?): Notification {
+    private fun buildNotification(t: MockTarget?, progress: MockProgress? = null): Notification {
         val open = PendingIntent.getActivity(
             this,
             0,
@@ -377,9 +572,7 @@ internal class MockLocationService : Service() {
             // Deliberately blunt: the user should never be able to forget this
             // is on, or mistake it for a normal DayPlan notification.
             .setContentTitle("Your location is being simulated")
-            .setContentText(
-                t?.let { "Other apps see ${it.displayName()}" } ?: "Starting…"
-            )
+            .setContentText(notificationText(t, progress))
             .setOngoing(true)
             .setOnlyAlertOnce(true)
             .setShowWhen(false)
@@ -392,13 +585,34 @@ internal class MockLocationService : Service() {
             .build()
     }
 
-    private fun updateNotification(t: MockTarget) {
-        runCatching { notificationManager()?.notify(NOTIFICATION_ID, buildNotification(t)) }
+    private fun notificationText(t: MockTarget?, progress: MockProgress?): String {
+        val where = t?.displayName() ?: return "Starting…"
+        if (progress == null) return "Other apps see $where"
+        if (progress.finished) return "Arrived at $where"
+        val percent = (progress.fraction * 100).toInt()
+        val km = progress.metresRemaining / 1000.0
+        val kmh = (progress.speedMps * 3.6f).toInt()
+        return String.format("%d%% · %.1f km left · %d km/h · %s", percent, km, kmh, where)
+    }
+
+    private fun updateNotification(t: MockTarget, progress: MockProgress? = null) {
+        runCatching {
+            notificationManager()?.notify(NOTIFICATION_ID, buildNotification(t, progress))
+        }
     }
 
     companion object {
         private const val NOTIFICATION_ID = 8321
         private const val WAKE_LOCK_TAG = "DayPlan:MockLocation"
+
+        /** Roughly once a second to JS. */
+        private const val PROGRESS_INTERVAL_MS = 1_000L
+
+        /** Far rarer for the notification — a 1 Hz redraw is a visible battery cost. */
+        private const val NOTIFICATION_INTERVAL_MS = 10_000L
+
+        /** Sentinel meaning "the arrival notification is already showing". */
+        private const val NOTIFICATION_ARRIVED = -1L
 
         /**
          * Surfaced on the status bus alongside RUNNING. Most likely cause is an
@@ -411,6 +625,13 @@ internal class MockLocationService : Service() {
                 "optimisation usually fixes this."
 
         const val ACTION_START = "com.dayplan.app.mocklocation.START"
+        const val ACTION_START_ROUTE = "com.dayplan.app.mocklocation.START_ROUTE"
+        const val EXTRA_SESSION_ID = "sessionId"
+        const val EXTRA_END_BEHAVIOUR = "endBehaviour"
+        const val EXTRA_SPEED_KMH = "speedKmh"
+
+        /** Used when a stored session has no speed recorded. */
+        const val DEFAULT_SPEED_KMH = 50.0
         const val ACTION_UPDATE = "com.dayplan.app.mocklocation.UPDATE"
         const val ACTION_STOP = "com.dayplan.app.mocklocation.STOP"
 
@@ -445,6 +666,25 @@ internal class MockLocationService : Service() {
                 context,
                 target.writeTo(
                     Intent(context, MockLocationService::class.java).setAction(ACTION_UPDATE)
+                ),
+            )
+        }
+
+        fun startRoute(
+            context: Context,
+            sessionId: String,
+            template: MockTarget,
+            endBehaviour: String,
+            speedKmh: Double,
+        ) {
+            send(
+                context,
+                template.writeTo(
+                    Intent(context, MockLocationService::class.java)
+                        .setAction(ACTION_START_ROUTE)
+                        .putExtra(EXTRA_SESSION_ID, sessionId)
+                        .putExtra(EXTRA_END_BEHAVIOUR, endBehaviour)
+                        .putExtra(EXTRA_SPEED_KMH, speedKmh)
                 ),
             )
         }

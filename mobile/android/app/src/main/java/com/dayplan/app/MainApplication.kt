@@ -2,6 +2,7 @@ package com.dayplan.app
 
 import android.app.Application
 import com.dayplan.app.mocklocation.MockLocationEngine
+import com.dayplan.app.mocklocation.MockLocationStore
 import com.dayplan.app.mocklocation.MockLocationPackage
 import com.facebook.react.PackageList
 import com.facebook.react.ReactApplication
@@ -53,5 +54,11 @@ class MainApplication : Application(), ReactApplication {
     // which makes a safety net depend on the JS import graph. This has no React
     // dependency, so process start is the right place for it.
     runCatching { MockLocationEngine.sweepOrphanProviders(this) }
+
+    // Same reasoning for the route geometry a session writes to internal
+    // storage: a crash must not leave debris that only a visit to the feature
+    // screen would clear. Safe unconditionally — the service rewrites its file
+    // before reading it back.
+    runCatching { MockLocationStore.sweepRouteFiles(this, keepSessionId = null) }
   }
 }

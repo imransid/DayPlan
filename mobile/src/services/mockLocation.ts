@@ -7,6 +7,7 @@ import {
 
 import NativeMockLocation, {
   type MockLocationOptions,
+  type RouteOptions,
 } from '../../specs/NativeMockLocation';
 
 /**
@@ -55,6 +56,42 @@ export interface MockLocationTarget {
   intervalMs?: number;
   /** Place name shown in the persistent notification. */
   label?: string;
+}
+
+export type RouteEndBehaviour = 'STOP' | 'LOOP' | 'PING_PONG';
+
+export interface MockRouteTarget {
+  startLatitude: number;
+  startLongitude: number;
+  endLatitude: number;
+  endLongitude: number;
+  /** Defaults to STOP: hold at the destination rather than reverting. */
+  endBehaviour?: RouteEndBehaviour;
+  /** Cruise speed, ramped over the first and last ~50 m. Defaults to 50. */
+  speedKmh?: number;
+  altitude?: number;
+  accuracy?: number;
+  intervalMs?: number;
+  label?: string;
+}
+
+/** Emitted about once a second while a route is running. */
+export interface MockRouteProgress {
+  /** 0 at the start, 1 at the destination. */
+  fraction: number;
+  metresTravelled: number;
+  metresRemaining: number;
+  speedMps: number;
+  bearingDegrees: number;
+  /** Milliseconds to the end of the current leg, or null if unknown. */
+  etaMs: number | null;
+  latitude: number;
+  longitude: number;
+  /**
+   * True once a STOP route has arrived. The session keeps running and holds the
+   * final fix — it does not revert to the real location.
+   */
+  finished: boolean;
 }
 
 export interface MockStatusEvent {
@@ -109,6 +146,7 @@ const native = Platform.OS === 'android' ? NativeMockLocation : null;
 export const isSupported: boolean = native != null;
 
 const STATUS_EVENT = 'mockLocationStatusChanged';
+const PROGRESS_EVENT = 'mockLocationProgress';
 
 const UNSUPPORTED_RESULT: MockActionResult = {
   ok: false,
@@ -238,6 +276,28 @@ export function addStatusListener(
   return () => subscription.remove();
 }
 
+/**
+ * Subscribe to route progress.
+ *
+ * Nothing is emitted for static sessions, and the native side drops events
+ * entirely when no React instance is attached, so the injection loop is never
+ * gated on JS.
+ */
+export function addProgressListener(
+  listener: (progress: MockRouteProgress) => void,
+): () => void {
+  if (!native) return () => undefined;
+  const emitter = new NativeEventEmitter(native as unknown as NativeModule);
+  const subscription = emitter.addListener(
+    PROGRESS_EVENT,
+    (event: MockRouteProgress) => {
+      if (event == null || typeof event.fraction !== 'number') return;
+      listener(event);
+    },
+  );
+  return () => subscription.remove();
+}
+
 // ── Permissions ─────────────────────────────────────────────────────────────
 
 /**
@@ -331,6 +391,40 @@ export async function start(
 
   try {
     await native.start(toOptions(target));
+    return { ok: true };
+  } catch (error) {
+    return toFailure(error);
+  }
+}
+
+/**
+ * Starts a moving session along a straight (great-circle) line.
+ *
+ * Same permission flow as {@link start}; the failure codes are identical, so
+ * callers can share their routing logic.
+ */
+export async function startRoute(
+  target: MockRouteTarget,
+): Promise<MockActionResult> {
+  if (!native) return UNSUPPORTED_RESULT;
+
+  const permission = await ensurePermissions();
+  if (!permission.granted) {
+    return {
+      ok: false,
+      code:
+        permission.permission === 'notifications'
+          ? 'E_MOCK_NOTIFICATIONS'
+          : 'E_MOCK_PERMISSION',
+      message: permission.blockedPermanently
+        ? 'That permission is blocked. Turn it on in DayPlan’s settings.'
+        : 'That permission is needed before a location can be simulated.',
+      blockedPermanently: permission.blockedPermanently,
+    };
+  }
+
+  try {
+    await native.startRoute({ ...target } as RouteOptions);
     return { ok: true };
   } catch (error) {
     return toFailure(error);

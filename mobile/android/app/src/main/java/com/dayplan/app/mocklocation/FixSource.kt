@@ -17,6 +17,12 @@ internal data class MockProgress(
     val etaMs: Long?,
     val latitude: Double,
     val longitude: Double,
+    /**
+     * True once a STOP route has arrived. The session deliberately keeps
+     * running and holding the final fix — snapping the user back to their real
+     * location without warning would be worse than standing at the destination.
+     */
+    val finished: Boolean = false,
 )
 
 /**
