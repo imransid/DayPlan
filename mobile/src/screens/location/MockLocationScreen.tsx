@@ -30,6 +30,7 @@ import {
   createPlaceId,
   type SavedPlace,
 } from '../../services/mockLocationStorage';
+import { RouteMode } from './RouteMode';
 import type { MainStackParamList } from '../../navigation/types';
 
 type Props = NativeStackScreenProps<MainStackParamList, 'MockLocation'>;
@@ -55,14 +56,20 @@ export function MockLocationScreen({ navigation }: Props) {
     isSupported,
     bootInterrupted,
     places,
+    progress,
     permissionBlocked,
     requestPermissions,
     start,
+    startRoute,
+    pauseRoute,
+    resumeRoute,
     stop,
     setLocation,
     dismissBootInterrupted,
     savePlaces,
   } = useMockLocation();
+
+  const [mode, setMode] = useState<'STATIC' | 'ROUTE'>('STATIC');
 
   const [lat, setLat] = useState('');
   const [lng, setLng] = useState('');
@@ -292,6 +299,47 @@ export function MockLocationScreen({ navigation }: Props) {
               </Animated.View>
             )}
 
+            <Animated.View entering={stagger(3)} style={styles.modeSwitch}>
+              {(['STATIC', 'ROUTE'] as const).map((m) => (
+                <Pressable
+                  key={m}
+                  onPress={() => setMode(m)}
+                  // Switching mode mid-session would silently change what is
+                  // being injected, so it waits until the session is stopped.
+                  disabled={isRunning}
+                  style={[
+                    styles.modeOption,
+                    mode === m && styles.modeOptionActive,
+                    isRunning && mode !== m && { opacity: 0.35 },
+                  ]}
+                >
+                  <Text
+                    style={[
+                      styles.modeLabel,
+                      mode === m && styles.modeLabelActive,
+                    ]}
+                  >
+                    {m === 'STATIC' ? 'Static' : 'Route'}
+                  </Text>
+                </Pressable>
+              ))}
+            </Animated.View>
+
+            {mode === 'ROUTE' ? (
+              <RouteMode
+                places={places}
+                progress={progress}
+                isRunning={isRunning}
+                busy={busy}
+                setBusy={setBusy}
+                startRoute={startRoute}
+                pauseRoute={pauseRoute}
+                resumeRoute={resumeRoute}
+                stop={stop}
+                showResult={showResult}
+              />
+            ) : (
+              <>
             <Animated.Text entering={stagger(3)} style={styles.sectionLabel}>
               COORDINATES
             </Animated.Text>
@@ -406,6 +454,8 @@ export function MockLocationScreen({ navigation }: Props) {
                   )}
                 </Animated.View>
               ))
+            )}
+              </>
             )}
           </>
         )}
@@ -536,6 +586,30 @@ const styles = StyleSheet.create({
   },
 
   row: { flexDirection: 'row', gap: spacing.md },
+
+  modeSwitch: {
+    flexDirection: 'row',
+    gap: 4,
+    padding: 4,
+    borderRadius: radius.md,
+    backgroundColor: colors.surfaceAlt,
+    borderWidth: 1,
+    borderColor: colors.border,
+    marginTop: spacing.lg,
+    marginBottom: spacing.sm,
+  },
+  modeOption: {
+    flex: 1,
+    paddingVertical: 10,
+    borderRadius: radius.sm,
+    alignItems: 'center',
+  },
+  modeOptionActive: {
+    backgroundColor: colors.surfaceStrong,
+    ...elevation.sm,
+  },
+  modeLabel: { fontSize: 14, fontWeight: '600', color: colors.textMuted },
+  modeLabelActive: { color: colors.textPrimary },
 
   card: {
     padding: 14,

@@ -57,8 +57,18 @@ class MainApplication : Application(), ReactApplication {
 
     // Same reasoning for the route geometry a session writes to internal
     // storage: a crash must not leave debris that only a visit to the feature
-    // screen would clear. Safe unconditionally — the service rewrites its file
-    // before reading it back.
-    runCatching { MockLocationStore.sweepRouteFiles(this, keepSessionId = null) }
+    // screen would clear.
+    //
+    // But NOT unconditionally. Application.onCreate runs before any Service in
+    // the process, and a START_STICKY restart after process death recreates the
+    // process — so sweeping everything here would delete the route file before
+    // MockLocationService could read it back, breaking recovery in precisely
+    // the case it exists for. Keep the file belonging to a session still marked
+    // active; everything else is debris.
+    runCatching {
+        val active =
+            if (MockLocationStore.isActive(this)) MockLocationStore.sessionId(this) else null
+        MockLocationStore.sweepRouteFiles(this, keepSessionId = active)
+    }
   }
 }

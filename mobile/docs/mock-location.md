@@ -148,6 +148,28 @@ location stack does not reproduce OEM behaviour.
 - [ ] Reboot mid-session. Expect: no auto-resume, session cleared, and a
       dismissible "tap to resume" notification.
 
+- [ ] **Force-stop mid-route, then relaunch and start the route again.** Confirm
+      it resumes at the position the elapsed time implies rather than erroring
+      out with "route data is missing".
+
+      This guards a regression that shipped once: the process-start sweep in
+      `MainApplication.onCreate()` deleted *every* route file, and
+      `Application.onCreate()` runs before any Service in the process — so on a
+      START_STICKY restart the file was gone before `recoverRouteSession` could
+      read it, and recovery failed every single time, in exactly the scenario it
+      was written for. The sweep now preserves the file belonging to a session
+      still marked active.
+
+- [ ] Let a STOP route arrive, then watch the notification for a minute. It
+      should post "Arrived" once and then stay put. (It previously re-posted
+      every second: the arrival sentinel `-1` made the 10s throttle comparison
+      true on every tick.)
+
+- [ ] Ping-pong route: on the return leg the progress bar should still count
+      *up* while the distance remaining counts *down*, with the direction shown
+      separately. Both are measured along the leg being driven, not the
+      underlying geometry.
+
 ### Permission edge cases
 
 - [ ] Deny POST_NOTIFICATIONS, then try to start. Expect a hard failure with

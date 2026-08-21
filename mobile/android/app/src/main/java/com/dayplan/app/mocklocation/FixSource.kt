@@ -7,7 +7,18 @@ package com.dayplan.app.mocklocation
  * persistent notification.
  */
 internal data class MockProgress(
-    /** 0.0 at the start, 1.0 at the destination. */
+    /**
+     * Progress through the leg currently being driven, 0.0 to 1.0.
+     *
+     * Leg-relative, not geometry-relative, so that on a ping-pong return leg it
+     * still counts up while [metresRemaining] counts down. Measuring it against
+     * the geometry instead made a progress bar run backwards while the distance
+     * beside it decreased. Use [reversed] to tell the user which way they are
+     * pointing.
+     *
+     * Invariant: metresTravelled + metresRemaining == the route length, and
+     * fraction == metresTravelled / route length.
+     */
     val fraction: Double,
     val metresTravelled: Double,
     val metresRemaining: Double,
@@ -23,6 +34,14 @@ internal data class MockProgress(
      * location without warning would be worse than standing at the destination.
      */
     val finished: Boolean = false,
+    /** True while driving a ping-pong return leg, back towards the start. */
+    val reversed: Boolean = false,
+    /**
+     * True while the route is held mid-journey. The session is still injecting
+     * the frozen position — stopping injection would let the fix go stale and
+     * consumers fall back to the real GPS within seconds.
+     */
+    val paused: Boolean = false,
 )
 
 /**

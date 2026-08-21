@@ -61,6 +61,17 @@ internal class MockLocationService : Service() {
     @Volatile
     private var lastNotificationUpdate: Long = 0L
 
+    /**
+     * Whether the "arrived" notification is already showing.
+     *
+     * A separate flag rather than a sentinel value in [lastNotificationUpdate]:
+     * overloading the timestamp with -1 made the throttle comparison
+     * `now - (-1) >= interval` true on every subsequent tick, so a finished
+     * route re-posted its notification once a second, forever.
+     */
+    @Volatile
+    private var arrivalShown: Boolean = false
+
     @Volatile
     private var activeProviders: List<String> = emptyList()
 
@@ -132,10 +143,18 @@ internal class MockLocationService : Service() {
             MockLocationStatusBus.publishProgress(progress)
         }
 
-        // Arrival is worth showing immediately rather than up to 10s late.
-        val notable = progress.finished && lastNotificationUpdate != NOTIFICATION_ARRIVED
-        if (notable || now - lastNotificationUpdate >= NOTIFICATION_INTERVAL_MS) {
-            lastNotificationUpdate = if (progress.finished) NOTIFICATION_ARRIVED else now
+        if (progress.finished) {
+            // Show arrival at once rather than up to 10s late, then stop
+            // touching the notification entirely — nothing changes after this.
+            if (!arrivalShown) {
+                arrivalShown = true
+                main.post { updateNotification(active.seed, progress) }
+            }
+            return
+        }
+
+        if (now - lastNotificationUpdate >= NOTIFICATION_INTERVAL_MS) {
+            lastNotificationUpdate = now
             main.post { updateNotification(active.seed, progress) }
         }
     }
@@ -184,6 +203,16 @@ internal class MockLocationService : Service() {
         return when {
             action == ACTION_UPDATE && isRunning -> {
                 applyTarget(requested)
+                START_STICKY
+            }
+
+            action == ACTION_PAUSE -> {
+                pauseRoute()
+                START_STICKY
+            }
+
+            action == ACTION_RESUME -> {
+                resumeRoute()
                 START_STICKY
             }
 
@@ -348,7 +377,17 @@ internal class MockLocationService : Service() {
         }
 
         val speed = ConstantSpeedModel.fromKmh(geometry.totalMetres, speedKmh)
-        val source = RouteFixSource(geometry, speed, endBehaviour, template)
+        val route = RouteFixSource(geometry, speed, endBehaviour, template)
+
+        // A session killed while paused must come back paused; restoring the
+        // clock baseline alone would silently start it moving again.
+        val pausedAt = MockLocationStore.pausedMetres(this)
+        val source: FixSource =
+            if (resumeFromRealtime != null && pausedAt != null) {
+                PausedRouteFixSource(route, route.elapsedForProfileMetres(pausedAt))
+            } else {
+                route
+            }
 
         val startRealtime = resumeFromRealtime ?: SystemClock.elapsedRealtime()
         session = Session(source, startRealtime, template)
@@ -379,6 +418,53 @@ internal class MockLocationService : Service() {
         )
         MockLocationStatusBus.publish(MockStatusEvent(MockStatus.RUNNING, wakeLockWarning))
         updateNotification(template)
+    }
+
+    /**
+     * Freezes the route where it is, without stopping injection.
+     *
+     * The session keeps pushing the frozen fix: a location that stops being
+     * refreshed goes stale within seconds and consumers fall back to the real
+     * GPS, which would be a far more surprising outcome than standing still.
+     */
+    private fun pauseRoute() {
+        val active = session ?: return
+        val route = active.source as? RouteFixSource ?: return
+
+        val elapsedMs = SystemClock.elapsedRealtime() - active.startRealtime
+        val metres = route.progressAt(elapsedMs).metresTravelled
+
+        session = Session(PausedRouteFixSource(route, elapsedMs), active.startRealtime, active.seed)
+        MockLocationStore.setPausedMetres(this, metres)
+        Log.i(MockLocationEngine.TAG, "route paused at ${metres.toInt()} m")
+
+        MockLocationStatusBus.publish(MockStatusEvent(MockStatus.RUNNING))
+        updateNotification(active.seed, session?.source?.progressAt(0L))
+    }
+
+    /**
+     * Resumes by rebasing the clock so the route is exactly where the pause left
+     * it, converting through distance rather than reusing the frozen elapsed
+     * value — that is what makes position, not time, the thing preserved.
+     */
+    private fun resumeRoute() {
+        val active = session ?: return
+        val paused = active.source as? PausedRouteFixSource ?: return
+
+        val metres = MockLocationStore.pausedMetres(this)
+            ?: paused.route.progressAt(paused.frozenElapsedMs).metresTravelled
+        val elapsedForMetres = paused.route.elapsedForProfileMetres(metres)
+
+        session = Session(
+            paused.route,
+            SystemClock.elapsedRealtime() - elapsedForMetres,
+            active.seed,
+        )
+        MockLocationStore.setPausedMetres(this, null)
+        arrivalShown = false
+        Log.i(MockLocationEngine.TAG, "route resumed at ${metres.toInt()} m")
+
+        MockLocationStatusBus.publish(MockStatusEvent(MockStatus.RUNNING))
     }
 
     /**
@@ -458,8 +544,10 @@ internal class MockLocationService : Service() {
 
         MockLocationStore.clearSession(this)
         MockLocationStore.sweepRouteFiles(this, keepSessionId = null)
+        MockLocationStore.setPausedMetres(this, null)
         lastProgressPublish = 0L
         lastNotificationUpdate = 0L
+        arrivalShown = false
         releaseWakeLock()
 
         injectorThread?.quitSafely()
@@ -611,8 +699,6 @@ internal class MockLocationService : Service() {
         /** Far rarer for the notification — a 1 Hz redraw is a visible battery cost. */
         private const val NOTIFICATION_INTERVAL_MS = 10_000L
 
-        /** Sentinel meaning "the arrival notification is already showing". */
-        private const val NOTIFICATION_ARRIVED = -1L
 
         /**
          * Surfaced on the status bus alongside RUNNING. Most likely cause is an
@@ -626,6 +712,8 @@ internal class MockLocationService : Service() {
 
         const val ACTION_START = "com.dayplan.app.mocklocation.START"
         const val ACTION_START_ROUTE = "com.dayplan.app.mocklocation.START_ROUTE"
+        const val ACTION_PAUSE = "com.dayplan.app.mocklocation.PAUSE"
+        const val ACTION_RESUME = "com.dayplan.app.mocklocation.RESUME"
         const val EXTRA_SESSION_ID = "sessionId"
         const val EXTRA_END_BEHAVIOUR = "endBehaviour"
         const val EXTRA_SPEED_KMH = "speedKmh"
@@ -687,6 +775,22 @@ internal class MockLocationService : Service() {
                         .putExtra(EXTRA_SPEED_KMH, speedKmh)
                 ),
             )
+        }
+
+        fun pause(context: Context) {
+            runCatching {
+                context.startService(
+                    Intent(context, MockLocationService::class.java).setAction(ACTION_PAUSE)
+                )
+            }
+        }
+
+        fun resume(context: Context) {
+            runCatching {
+                context.startService(
+                    Intent(context, MockLocationService::class.java).setAction(ACTION_RESUME)
+                )
+            }
         }
 
         fun stop(context: Context) {

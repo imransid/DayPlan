@@ -22,6 +22,27 @@ internal interface SpeedModel {
 
     /** Speed in m/s at a given distance along the profile. */
     fun speedAt(metres: Double): Float
+
+    /**
+     * The elapsed time at which [distanceAt] reaches [metres] — the inverse of
+     * [distanceAt].
+     *
+     * Resuming from a pause rebases the session clock through this, because
+     * pause stores travelled *distance* rather than elapsed time (see
+     * docs/mock-location.md). Bisection rather than an algebraic inverse so
+     * every implementation gets it for free; distanceAt is monotonic
+     * non-decreasing, which is all convergence needs.
+     */
+    fun elapsedForDistance(metres: Double): Long {
+        val target = metres.coerceAtLeast(0.0)
+        var lo = 0L
+        var hi = totalDurationMs
+        while (hi - lo > 1L) {
+            val mid = lo + (hi - lo) / 2
+            if (distanceAt(mid) < target) lo = mid else hi = mid
+        }
+        return hi
+    }
 }
 
 /**
@@ -47,7 +68,11 @@ internal class ConstantSpeedModel(
 
     private val cruise: Double = cruiseMetresPerSecond.coerceAtLeast(MIN_SPEED_MPS)
 
-    /** Never more than a quarter of the route, so a cruise phase always exists. */
+    /**
+     * Capped at half the route length — one ramp at each end. At the cap the
+     * two ramps meet and there is no cruise phase at all, which is the intended
+     * profile for anything shorter than two full ramps.
+     */
     private val ramp: Double = rampMetres.coerceIn(0.0, totalMetres / 2.0)
 
     /** Acceleration implied by reaching [cruise] over [ramp] metres. */

@@ -92,6 +92,14 @@ export interface MockRouteProgress {
    * final fix — it does not revert to the real location.
    */
   finished: boolean;
+  /** True while driving a ping-pong return leg, back towards the start. */
+  reversed: boolean;
+  /**
+   * True while the route is held mid-journey. The frozen fix is still being
+   * injected — pausing injection would let it go stale and consumers fall back
+   * to the real GPS within seconds.
+   */
+  paused: boolean;
 }
 
 export interface MockStatusEvent {
@@ -438,6 +446,28 @@ export async function update(
   if (!native) return UNSUPPORTED_RESULT;
   try {
     await native.update(toOptions(target));
+    return { ok: true };
+  } catch (error) {
+    return toFailure(error);
+  }
+}
+
+/** Freezes a route in place without letting the fix go stale. */
+export async function pauseRoute(): Promise<MockActionResult> {
+  if (!native) return UNSUPPORTED_RESULT;
+  try {
+    await native.pauseRoute();
+    return { ok: true };
+  } catch (error) {
+    return toFailure(error);
+  }
+}
+
+/** Resumes a paused route from exactly where it stopped. */
+export async function resumeRoute(): Promise<MockActionResult> {
+  if (!native) return UNSUPPORTED_RESULT;
+  try {
+    await native.resumeRoute();
     return { ok: true };
   } catch (error) {
     return toFailure(error);

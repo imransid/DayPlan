@@ -90,6 +90,7 @@ class MockLocationModule(reactContext: ReactApplicationContext) :
             putDouble("latitude", progress.latitude)
             putDouble("longitude", progress.longitude)
             putBoolean("finished", progress.finished)
+            putBoolean("reversed", progress.reversed)
         }
         runCatching {
             ctx.getJSModule(DeviceEventManagerModule.RCTDeviceEventEmitter::class.java)
@@ -272,6 +273,25 @@ class MockLocationModule(reactContext: ReactApplicationContext) :
         } catch (e: Throwable) {
             promise.reject(E_SERVICE, e.message, e)
         }
+    }
+
+    /** Freezes a route in place. The frozen fix keeps being injected. */
+    override fun pauseRoute(promise: Promise) {
+        if (!MockLocationService.isRunning) {
+            promise.reject(E_NOT_RUNNING, "No simulated location is running.")
+            return
+        }
+        MockLocationService.pause(reactApplicationContext)
+        promise.resolve(null)
+    }
+
+    override fun resumeRoute(promise: Promise) {
+        if (!MockLocationService.isRunning) {
+            promise.reject(E_NOT_RUNNING, "No simulated location is running.")
+            return
+        }
+        MockLocationService.resume(reactApplicationContext)
+        promise.resolve(null)
     }
 
     override fun stop(promise: Promise) {

@@ -30,6 +30,14 @@ internal object MockLocationStore {
     private const val KEY_SPEED_KMH = "speedKmh"
 
     /**
+     * Metres into the current leg where a pause froze the route, or absent when
+     * running. Written once per pause, never per tick — pause stores travelled
+     * distance so that resuming preserves position even if the speed model
+     * changed meanwhile.
+     */
+    private const val KEY_PAUSED_METRES = "pausedMetres"
+
+    /**
      * The session's elapsed-realtime baseline, written once at start.
      *
      * This — not a periodically-updated travelled distance — is what a sticky
@@ -133,6 +141,13 @@ internal object MockLocationStore {
 
     fun speedKmh(context: Context): Double? =
         prefs(context).getString(KEY_SPEED_KMH, null)?.toDoubleOrNull()
+
+    fun setPausedMetres(context: Context, metres: Double?) {
+        prefs(context).edit().putString(KEY_PAUSED_METRES, metres?.toString()).apply()
+    }
+
+    fun pausedMetres(context: Context): Double? =
+        prefs(context).getString(KEY_PAUSED_METRES, null)?.toDoubleOrNull()
 
     // ── Route geometry file ──────────────────────────────────────────────────
 

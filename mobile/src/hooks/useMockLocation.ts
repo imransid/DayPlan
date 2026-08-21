@@ -2,17 +2,23 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { AppState } from 'react-native';
 
 import {
+  addProgressListener,
   addStatusListener,
   clearBootInterrupted,
   ensurePermissions,
   getStatus,
   peekBootInterrupted,
   isSupported,
+  pauseRoute as pauseRouteNative,
+  resumeRoute as resumeRouteNative,
   start as startNative,
+  startRoute as startRouteNative,
   stop as stopNative,
   update as updateNative,
   type MockActionResult,
   type MockLocationTarget,
+  type MockRouteProgress,
+  type MockRouteTarget,
   type MockStatus,
   type PermissionResult,
 } from '../services/mockLocation';
@@ -42,6 +48,8 @@ export interface UseMockLocation {
   /** True while a reboot-ended session still needs acknowledging. */
   bootInterrupted: boolean;
   places: SavedPlace[];
+  /** Live route telemetry, or null when no route is running. */
+  progress: MockRouteProgress | null;
   /**
    * Which permission the user has permanently blocked, if we've found out.
    * Null means "not blocked, or we haven't asked yet" — and those two are the
@@ -53,6 +61,9 @@ export interface UseMockLocation {
   /** Fires the runtime prompts. The banner's default action on first run. */
   requestPermissions: () => Promise<PermissionResult>;
   start: (target?: MockLocationTarget) => Promise<MockActionResult>;
+  startRoute: (target: MockRouteTarget) => Promise<MockActionResult>;
+  pauseRoute: () => Promise<MockActionResult>;
+  resumeRoute: () => Promise<MockActionResult>;
   stop: () => Promise<MockActionResult>;
   /** Select a target; live-updates the running session if there is one. */
   setLocation: (target: MockLocationTarget) => Promise<MockActionResult>;
@@ -70,6 +81,7 @@ export function useMockLocation(): UseMockLocation {
   const [permissionBlocked, setPermissionBlocked] = useState<
     'location' | 'notifications' | null
   >(null);
+  const [progress, setProgress] = useState<MockRouteProgress | null>(null);
 
   // Guards setState after unmount for the async bootstrap below.
   const mounted = useRef(true);
@@ -114,6 +126,15 @@ export function useMockLocation(): UseMockLocation {
         if (!mounted.current) return;
         setStatus(event.status);
         setError(event.error ?? null);
+      }),
+    [],
+  );
+
+  // Route telemetry, roughly once a second while a route runs.
+  useEffect(
+    () =>
+      addProgressListener((next) => {
+        if (mounted.current) setProgress(next);
       }),
     [],
   );
@@ -222,10 +243,53 @@ export function useMockLocation(): UseMockLocation {
     [persist, refresh],
   );
 
+  const startRoute = useCallback(
+    async (target: MockRouteTarget): Promise<MockActionResult> => {
+      setError(null);
+      setProgress(null);
+      const result = await startRouteNative(target);
+      if (!mounted.current) return result;
+      if (result.ok) {
+        setBootInterrupted(false);
+        void clearBootInterrupted();
+      } else {
+        setError(result.message);
+        if (
+          result.code === 'E_MOCK_PERMISSION' ||
+          result.code === 'E_MOCK_NOTIFICATIONS'
+        ) {
+          setPermissionBlocked(
+            result.blockedPermanently === true
+              ? result.code === 'E_MOCK_NOTIFICATIONS'
+                ? 'notifications'
+                : 'location'
+              : null,
+          );
+        }
+      }
+      void refresh();
+      return result;
+    },
+    [refresh],
+  );
+
+  const pauseRoute = useCallback(async (): Promise<MockActionResult> => {
+    const result = await pauseRouteNative();
+    if (!result.ok && mounted.current) setError(result.message);
+    return result;
+  }, []);
+
+  const resumeRoute = useCallback(async (): Promise<MockActionResult> => {
+    const result = await resumeRouteNative();
+    if (!result.ok && mounted.current) setError(result.message);
+    return result;
+  }, []);
+
   const stop = useCallback(async (): Promise<MockActionResult> => {
     const result = await stopNative();
     if (!mounted.current) return result;
     if (!result.ok) setError(result.message);
+    setProgress(null);
     void refresh();
     return result;
   }, [refresh]);
@@ -254,9 +318,13 @@ export function useMockLocation(): UseMockLocation {
     isSupported,
     bootInterrupted,
     places,
+    progress,
     permissionBlocked,
     requestPermissions,
     start,
+    startRoute,
+    pauseRoute,
+    resumeRoute,
     stop,
     setLocation,
     refresh,

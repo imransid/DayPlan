@@ -82,6 +82,9 @@ internal class RouteFixSource(
         }
     }
 
+    /** Elapsed time at which this source is [metres] into its current leg. */
+    fun elapsedForProfileMetres(metres: Double): Long = speed.elapsedForDistance(metres)
+
     override fun fixAt(elapsedMs: Long): MockTarget {
         val tr = traversalAt(elapsedMs)
         val point = geometry.pointAt(tr.routeMetres)
@@ -111,11 +114,13 @@ internal class RouteFixSource(
         val point = geometry.pointAt(tr.routeMetres)
         val period = speed.totalDurationMs
 
+        // All three are measured along the *profile* — the leg being driven —
+        // so they always agree with each other and with the ETA. Measuring
+        // fraction on the geometry instead made it count down on a return leg
+        // while the distance remaining also counted down.
         return MockProgress(
-            fraction = if (total <= 0.0) 1.0 else (tr.routeMetres / total).coerceIn(0.0, 1.0),
-            metresTravelled = tr.routeMetres,
-            // Remaining in the leg being driven, which is what an ETA has to
-            // agree with — on a return leg that is not `total - routeMetres`.
+            fraction = if (total <= 0.0) 1.0 else (tr.profileMetres / total).coerceIn(0.0, 1.0),
+            metresTravelled = tr.profileMetres,
             metresRemaining = (total - tr.profileMetres).coerceAtLeast(0.0),
             speedMps = speed.speedAt(tr.profileMetres),
             bearingDegrees =
@@ -124,6 +129,30 @@ internal class RouteFixSource(
             latitude = point.latitude,
             longitude = point.longitude,
             finished = isFinished(elapsedMs),
+            reversed = tr.reversed,
         )
     }
+}
+
+/**
+ * A [RouteFixSource] held at one instant.
+ *
+ * Pausing swaps the session's source for this rather than stopping the
+ * injection loop: a paused route must keep pushing its frozen position, because
+ * a fix that stops being refreshed goes stale within seconds and consumers
+ * quietly fall back to the real GPS. Progress keeps flowing too, so the UI can
+ * show where the user is standing while paused.
+ */
+internal class PausedRouteFixSource(
+    val route: RouteFixSource,
+    /** The elapsed value the route is frozen at. */
+    val frozenElapsedMs: Long,
+) : FixSource {
+
+    override fun fixAt(elapsedMs: Long): MockTarget = route.fixAt(frozenElapsedMs)
+
+    override fun isFinished(elapsedMs: Long): Boolean = route.isFinished(frozenElapsedMs)
+
+    override fun progressAt(elapsedMs: Long): MockProgress? =
+        route.progressAt(frozenElapsedMs)?.copy(paused = true)
 }

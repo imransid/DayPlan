@@ -102,6 +102,13 @@ export interface Spec extends TurboModule {
   start(options: MockLocationOptions): Promise<void>;
   /** Starts a moving session. Progress arrives on 'mockLocationProgress'. */
   startRoute(options: RouteOptions): Promise<void>;
+  /**
+   * Freezes a route where it is. The session keeps injecting the frozen fix —
+   * stopping injection would let it go stale and consumers fall back to real GPS.
+   */
+  pauseRoute(): Promise<void>;
+  /** Resumes from exactly where the pause left off, preserving position. */
+  resumeRoute(): Promise<void>;
   /** Move the target without tearing down the providers or the service. */
   update(options: MockLocationOptions): Promise<void>;
   stop(): Promise<void>;
