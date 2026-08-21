@@ -10,6 +10,7 @@ import { NoteEditorScreen } from '../screens/notes/NoteEditorScreen';
 import { RecentlyDeletedScreen } from '../screens/notes/RecentlyDeletedScreen';
 import { DoodleScreen } from '../screens/notes/DoodleScreen';
 import { SettingsScreen } from '../screens/settings/SettingsScreen';
+import { MockLocationScreen } from '../screens/location/MockLocationScreen';
 import { IntegrationsScreen } from '../screens/integrations/IntegrationsScreen';
 import { ChannelManagerScreen } from '../screens/integrations/ChannelManagerScreen';
 import { ChannelPickerScreen } from '../screens/integrations/ChannelPickerScreen';
@@ -55,6 +56,7 @@ export function MainNavigator() {
       <Stack.Screen name="RecentlyDeleted" component={RecentlyDeletedScreen} />
       <Stack.Screen name="Doodle" component={DoodleScreen} />
       <Stack.Screen name="Settings" component={SettingsScreen} />
+      <Stack.Screen name="MockLocation" component={MockLocationScreen} />
       <Stack.Screen name="Integrations" component={IntegrationsScreen} />
       <Stack.Screen name="ChannelManager" component={ChannelManagerScreen} />
       <Stack.Screen name="ChannelPicker" component={ChannelPickerScreen} />

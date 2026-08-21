@@ -1,4 +1,5 @@
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
 
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
@@ -15,6 +16,38 @@
     <!-- In-app updater: download the new APK from GitHub Releases and launch the
          system installer (user grants "install unknown apps" once). -->
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+
+    <!-- ── System-wide mock location (Android only) ──────────────────────────
+         The user must additionally select DayPlan under Developer Options ->
+         "Select mock location app"; that grants the OPSTR_MOCK_LOCATION app op,
+         which is what the LocationManager test-provider API actually checks.
+
+         ACCESS_MOCK_LOCATION is NOT grantable to a normal app since Android 6
+         and we never hold it. It stays declared because AOSP's Settings
+         AppPicker filters the "Select mock location app" list down to packages
+         that request it — drop this line and DayPlan never appears in the
+         picker at all. tools:ignore silences the two lint checks that
+         (correctly, for the grant) consider it pointless. -->
+    <uses-permission
+        android:name="android.permission.ACCESS_MOCK_LOCATION"
+        tools:ignore="MockLocation,ProtectedPermissions" />
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+    <!-- Deliberately NOT ACCESS_BACKGROUND_LOCATION: we write test-provider
+         fixes, we never read the device's location in the background. -->
+
+    <!-- The injector runs as a location-typed foreground service so it keeps
+         re-pushing the fix while DayPlan is backgrounded. FOREGROUND_SERVICE_LOCATION
+         is required from Android 14 (targetSdk 34). -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />
+    <!-- Re-arm the "a reboot ended your session" prompt. We never auto-resume. -->
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <!-- Optional, user-dismissible Doze exemption so the injection loop isn't
+         suspended with the screen off. Prompted for, never required. -->
+    <uses-permission
+        android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS"
+        tools:ignore="BatteryLife" />
 
     <application
       android:name=".MainApplication"
@@ -46,5 +79,22 @@
             <data android:scheme="dayplan" />
         </intent-filter>
       </activity>
+
+      <!-- Keeps injecting the mock fix (~1/s) while the app is backgrounded.
+           A single setTestProviderLocation call goes stale within seconds and
+           consumers silently fall back to the real GPS. -->
+      <service
+        android:name=".mocklocation.MockLocationService"
+        android:exported="false"
+        android:foregroundServiceType="location" />
+
+      <receiver
+        android:name=".mocklocation.MockLocationBootReceiver"
+        android:exported="true"
+        android:enabled="true">
+        <intent-filter>
+          <action android:name="android.intent.action.BOOT_COMPLETED" />
+        </intent-filter>
+      </receiver>
     </application>
 </manifest>
