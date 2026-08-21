@@ -34,6 +34,8 @@ internal class RouteFixSource(
     private val template: MockTarget,
 ) : FixSource {
 
+    override val mode: MockSessionMode = MockSessionMode.ROUTE
+
     /**
      * Where one traversal has got to.
      *
@@ -149,10 +151,14 @@ internal class PausedRouteFixSource(
     val frozenElapsedMs: Long,
 ) : FixSource {
 
+    // A paused route is still a route: pausing must not make route-only
+    // operations look unavailable, or make static-only ones look valid.
+    override val mode: MockSessionMode = MockSessionMode.ROUTE
+
     override fun fixAt(elapsedMs: Long): MockTarget = route.fixAt(frozenElapsedMs)
 
     override fun isFinished(elapsedMs: Long): Boolean = route.isFinished(frozenElapsedMs)
 
-    override fun progressAt(elapsedMs: Long): MockProgress? =
-        route.progressAt(frozenElapsedMs)?.copy(paused = true)
+    override fun progressAt(elapsedMs: Long): MockProgress =
+        route.progressAt(frozenElapsedMs).copy(paused = true)
 }

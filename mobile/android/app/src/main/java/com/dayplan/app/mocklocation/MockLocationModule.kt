@@ -259,6 +259,16 @@ class MockLocationModule(reactContext: ReactApplicationContext) :
             promise.reject(E_NOT_RUNNING, "No simulated location is running — call start() first.")
             return
         }
+        // update() installs a static fix. Applied to a running route it would
+        // replace the route with a frozen point and report success, so the UI
+        // would show a live journey that had silently stopped moving.
+        if (MockLocationService.currentMode != MockSessionMode.STATIC) {
+            promise.reject(
+                E_WRONG_MODE,
+                "A route is running. Stop it before setting a fixed location.",
+            )
+            return
+        }
 
         val target = try {
             MockTarget.fromReadableMap(options)
@@ -277,21 +287,40 @@ class MockLocationModule(reactContext: ReactApplicationContext) :
 
     /** Freezes a route in place. The frozen fix keeps being injected. */
     override fun pauseRoute(promise: Promise) {
-        if (!MockLocationService.isRunning) {
-            promise.reject(E_NOT_RUNNING, "No simulated location is running.")
-            return
-        }
+        if (!requireRouteSession(promise)) return
         MockLocationService.pause(reactApplicationContext)
         promise.resolve(null)
     }
 
     override fun resumeRoute(promise: Promise) {
-        if (!MockLocationService.isRunning) {
-            promise.reject(E_NOT_RUNNING, "No simulated location is running.")
-            return
-        }
+        if (!requireRouteSession(promise)) return
         MockLocationService.resume(reactApplicationContext)
         promise.resolve(null)
+    }
+
+    /**
+     * @return true when a route session is live. Otherwise rejects [promise]
+     * with the reason and returns false.
+     *
+     * Without the mode half these resolved successfully against a static
+     * session while the service quietly did nothing, because it discards a
+     * non-route source with `as? RouteFixSource ?: return`.
+     */
+    private fun requireRouteSession(promise: Promise): Boolean {
+        if (!MockLocationService.isRunning) {
+            promise.reject(E_NOT_RUNNING, "No simulated location is running.")
+            return false
+        }
+        if (MockLocationService.currentMode != MockSessionMode.ROUTE) {
+            promise.reject(E_WRONG_MODE, "No route is running — this is a fixed location.")
+            return false
+        }
+        return true
+    }
+
+    /** 'STATIC', 'ROUTE', or 'NONE' when nothing is running. */
+    override fun getSessionMode(promise: Promise) {
+        promise.resolve(MockLocationService.currentMode?.name ?: "NONE")
     }
 
     override fun stop(promise: Promise) {
@@ -426,6 +455,7 @@ class MockLocationModule(reactContext: ReactApplicationContext) :
         const val E_NOTIFICATIONS = "E_MOCK_NOTIFICATIONS"
         const val E_NOT_SELECTED = "E_MOCK_NOT_SELECTED"
         const val E_NOT_RUNNING = "E_MOCK_NOT_RUNNING"
+        const val E_WRONG_MODE = "E_MOCK_WRONG_MODE"
         const val E_SERVICE = "E_MOCK_SERVICE"
         const val E_SETTINGS = "E_MOCK_SETTINGS"
     }

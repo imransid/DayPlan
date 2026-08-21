@@ -42,6 +42,7 @@ export type MockLocationErrorCode =
   | 'E_MOCK_NOTIFICATIONS'
   | 'E_MOCK_NOT_SELECTED'
   | 'E_MOCK_NOT_RUNNING'
+  | 'E_MOCK_WRONG_MODE'
   | 'E_MOCK_SERVICE'
   | 'E_MOCK_SETTINGS'
   | 'E_MOCK_UNSUPPORTED';
@@ -57,6 +58,9 @@ export interface MockLocationTarget {
   /** Place name shown in the persistent notification. */
   label?: string;
 }
+
+/** Which kind of session is live. 'NONE' when nothing is running. */
+export type MockSessionMode = 'STATIC' | 'ROUTE' | 'NONE';
 
 export type RouteEndBehaviour = 'STOP' | 'LOOP' | 'PING_PONG';
 
@@ -195,6 +199,7 @@ function toFailure(error: unknown): MockActionResult {
     'E_MOCK_NOTIFICATIONS',
     'E_MOCK_NOT_SELECTED',
     'E_MOCK_NOT_RUNNING',
+    'E_MOCK_WRONG_MODE',
     'E_MOCK_SERVICE',
     'E_MOCK_SETTINGS',
     'E_MOCK_UNSUPPORTED',
@@ -219,6 +224,23 @@ export async function getStatus(): Promise<MockStatus> {
   } catch {
     // A wedged native call shouldn't strand the UI with no status at all.
     return 'UNSUPPORTED';
+  }
+}
+
+/**
+ * Which kind of session is live.
+ *
+ * The screen uses this to open on the tab matching what is actually running —
+ * defaulting to Static while a route ran was what made an accidental update()
+ * reachable in the first place.
+ */
+export async function getSessionMode(): Promise<MockSessionMode> {
+  if (!native) return 'NONE';
+  try {
+    const raw = await native.getSessionMode();
+    return raw === 'STATIC' || raw === 'ROUTE' ? raw : 'NONE';
+  } catch {
+    return 'NONE';
   }
 }
 

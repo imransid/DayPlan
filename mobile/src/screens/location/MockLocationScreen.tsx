@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -57,6 +57,7 @@ export function MockLocationScreen({ navigation }: Props) {
     bootInterrupted,
     places,
     progress,
+    sessionMode,
     permissionBlocked,
     requestPermissions,
     start,
@@ -70,6 +71,21 @@ export function MockLocationScreen({ navigation }: Props) {
   } = useMockLocation();
 
   const [mode, setMode] = useState<'STATIC' | 'ROUTE'>('STATIC');
+
+  /**
+   * Open on the tab matching whatever is actually running.
+   *
+   * Landing on Static with a route live is what made an accidental static
+   * update() reachable at all — one tap on a saved place used to replace the
+   * running route with a frozen point. Applied once, so the user stays in
+   * control after that.
+   */
+  const modeAdopted = useRef(false);
+  useEffect(() => {
+    if (modeAdopted.current || sessionMode === 'NONE') return;
+    modeAdopted.current = true;
+    setMode(sessionMode === 'ROUTE' ? 'ROUTE' : 'STATIC');
+  }, [sessionMode]);
 
   const [lat, setLat] = useState('');
   const [lng, setLng] = useState('');

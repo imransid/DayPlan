@@ -1,6 +1,14 @@
 package com.dayplan.app.mocklocation
 
 /**
+ * Which kind of session a [FixSource] implements.
+ *
+ * Carried on the source itself rather than inferred from its class at call
+ * sites, so adding a source can't quietly bypass a mode check.
+ */
+internal enum class MockSessionMode { STATIC, ROUTE }
+
+/**
  * Live progress through a finite route. Null for sources that never finish.
  *
  * Reported to JS over the existing status bus and, far less often, to the
@@ -80,6 +88,8 @@ internal data class MockProgress(
  */
 internal interface FixSource {
 
+    val mode: MockSessionMode
+
     /** The fix this many milliseconds after the session's clock baseline. */
     fun fixAt(elapsedMs: Long): MockTarget
 
@@ -97,6 +107,8 @@ internal interface FixSource {
  * does not need the session clock rebased.
  */
 internal class StaticFixSource(private val target: MockTarget) : FixSource {
+
+    override val mode: MockSessionMode = MockSessionMode.STATIC
 
     override fun fixAt(elapsedMs: Long): MockTarget = target
 

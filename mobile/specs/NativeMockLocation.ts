@@ -70,6 +70,8 @@ export type RouteOptions = {
 export interface Spec extends TurboModule {
   /** True when DayPlan holds the OPSTR_MOCK_LOCATION app op. */
   isMockLocationEnabled(): Promise<boolean>;
+  /** 'STATIC', 'ROUTE', or 'NONE' when nothing is running. */
+  getSessionMode(): Promise<string>;
   /** One of MockStatus — see src/services/mockLocation.ts for the union. */
   getStatus(): Promise<string>;
   /** Settings.ACTION_APPLICATION_DEVELOPMENT_SETTINGS. */

@@ -202,7 +202,17 @@ internal class MockLocationService : Service() {
 
         return when {
             action == ACTION_UPDATE && isRunning -> {
-                applyTarget(requested)
+                // Defence in depth — the module rejects this first. applyTarget
+                // installs a StaticFixSource, so letting it through during a
+                // route would silently replace the route with a frozen point.
+                if (currentMode == MockSessionMode.STATIC) {
+                    applyTarget(requested)
+                } else {
+                    Log.w(
+                        MockLocationEngine.TAG,
+                        "ignoring a static update() while a route session is running",
+                    )
+                }
                 START_STICKY
             }
 
@@ -306,7 +316,6 @@ internal class MockLocationService : Service() {
         }
 
         installSession(StaticFixSource(t), seed = t, rebaseClock = true)
-        isRunning = true
         MockLocationStore.saveSession(this, t)
         MockLocationStore.saveSessionClock(
             context = this,
@@ -390,8 +399,7 @@ internal class MockLocationService : Service() {
             }
 
         val startRealtime = resumeFromRealtime ?: SystemClock.elapsedRealtime()
-        session = Session(source, startRealtime, template)
-        isRunning = true
+        setRunning(Session(source, startRealtime, template))
 
         MockLocationStore.saveSession(this, template)
         MockLocationStore.saveSessionClock(
@@ -434,7 +442,9 @@ internal class MockLocationService : Service() {
         val elapsedMs = SystemClock.elapsedRealtime() - active.startRealtime
         val metres = route.progressAt(elapsedMs).metresTravelled
 
-        session = Session(PausedRouteFixSource(route, elapsedMs), active.startRealtime, active.seed)
+        setRunning(
+            Session(PausedRouteFixSource(route, elapsedMs), active.startRealtime, active.seed)
+        )
         MockLocationStore.setPausedMetres(this, metres)
         Log.i(MockLocationEngine.TAG, "route paused at ${metres.toInt()} m")
 
@@ -455,10 +465,12 @@ internal class MockLocationService : Service() {
             ?: paused.route.progressAt(paused.frozenElapsedMs).metresTravelled
         val elapsedForMetres = paused.route.elapsedForProfileMetres(metres)
 
-        session = Session(
-            paused.route,
-            SystemClock.elapsedRealtime() - elapsedForMetres,
-            active.seed,
+        setRunning(
+            Session(
+                paused.route,
+                SystemClock.elapsedRealtime() - elapsedForMetres,
+                active.seed,
+            )
         )
         MockLocationStore.setPausedMetres(this, null)
         arrivalShown = false
@@ -511,6 +523,20 @@ internal class MockLocationService : Service() {
     }
 
     /**
+     * The one place session state is written.
+     *
+     * `session`, `isRunning` and `currentMode` describe the same thing and have
+     * to move together — assigning one and forgetting another is how a running
+     * route ends up reporting READY, or a route session accepting a static-only
+     * operation. Nothing else in this class assigns any of the three.
+     */
+    private fun setRunning(next: Session?) {
+        session = next
+        isRunning = next != null
+        currentMode = next?.source?.mode
+    }
+
+    /**
      * Publishes a new session for the injection loop to read.
      *
      * @param rebaseClock restart elapsed time at zero. Required whenever the new
@@ -522,7 +548,7 @@ internal class MockLocationService : Service() {
         val startRealtime =
             if (rebaseClock) SystemClock.elapsedRealtime()
             else session?.startRealtime ?: SystemClock.elapsedRealtime()
-        session = Session(source, startRealtime, seed)
+        setRunning(Session(source, startRealtime, seed))
     }
 
     /** Move the target without tearing down providers or the loop. */
@@ -536,8 +562,7 @@ internal class MockLocationService : Service() {
     /** @param finalStatus null to report whatever the real status is once we've stopped. */
     private fun stopSession(finalStatus: MockStatus?, error: String?) {
         retireInjection()
-        session = null
-        isRunning = false
+        setRunning(null)
 
         locationManager?.let { MockLocationEngine.removeProviders(it, activeProviders) }
         activeProviders = emptyList()
@@ -570,7 +595,7 @@ internal class MockLocationService : Service() {
         // system_server and the device would keep reporting the fake fix.
         if (isRunning) {
             locationManager?.let { MockLocationEngine.removeProviders(it, activeProviders) }
-            isRunning = false
+            setRunning(null)
         }
         retireInjection()
         injectorThread?.quitSafely()
@@ -730,6 +755,17 @@ internal class MockLocationService : Service() {
          */
         @Volatile
         var isRunning: Boolean = false
+            private set
+
+        /**
+         * Which mode the live session is, or null when nothing is running.
+         *
+         * Read by the React module so static-only and route-only operations can
+         * be rejected with a clear code instead of quietly doing the wrong
+         * thing. Written only by setRunning, alongside isRunning.
+         */
+        @Volatile
+        var currentMode: MockSessionMode? = null
             private set
 
         private fun send(context: Context, intent: Intent) {

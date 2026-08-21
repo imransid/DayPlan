@@ -6,9 +6,10 @@ import {
   addStatusListener,
   clearBootInterrupted,
   ensurePermissions,
+  getSessionMode,
   getStatus,
-  peekBootInterrupted,
   isSupported,
+  peekBootInterrupted,
   pauseRoute as pauseRouteNative,
   resumeRoute as resumeRouteNative,
   start as startNative,
@@ -19,6 +20,7 @@ import {
   type MockLocationTarget,
   type MockRouteProgress,
   type MockRouteTarget,
+  type MockSessionMode,
   type MockStatus,
   type PermissionResult,
 } from '../services/mockLocation';
@@ -50,6 +52,8 @@ export interface UseMockLocation {
   places: SavedPlace[];
   /** Live route telemetry, or null when no route is running. */
   progress: MockRouteProgress | null;
+  /** Which kind of session is live, so the UI can open on the matching tab. */
+  sessionMode: MockSessionMode;
   /**
    * Which permission the user has permanently blocked, if we've found out.
    * Null means "not blocked, or we haven't asked yet" — and those two are the
@@ -82,6 +86,7 @@ export function useMockLocation(): UseMockLocation {
     'location' | 'notifications' | null
   >(null);
   const [progress, setProgress] = useState<MockRouteProgress | null>(null);
+  const [sessionMode, setSessionMode] = useState<MockSessionMode>('NONE');
 
   // Guards setState after unmount for the async bootstrap below.
   const mounted = useRef(true);
@@ -93,8 +98,13 @@ export function useMockLocation(): UseMockLocation {
   }, []);
 
   const refresh = useCallback(async (): Promise<MockStatus> => {
-    const next = await getStatus();
-    if (mounted.current) setStatus(next);
+    // Read together: a status of RUNNING is only actionable alongside knowing
+    // which kind of session it is.
+    const [next, nextMode] = await Promise.all([getStatus(), getSessionMode()]);
+    if (mounted.current) {
+      setStatus(next);
+      setSessionMode(nextMode);
+    }
     return next;
   }, []);
 
@@ -319,6 +329,7 @@ export function useMockLocation(): UseMockLocation {
     bootInterrupted,
     places,
     progress,
+    sessionMode,
     permissionBlocked,
     requestPermissions,
     start,
