@@ -432,14 +432,21 @@ export function SettingsScreen({ navigation }: Props) {
               last={Platform.OS !== 'android'}
             />
             {Platform.OS === 'android' && (
-              <SettingsRow
-                label="Check for updates"
-                sub="Download & install the latest build from GitHub"
-                loading={checkingUpdate}
-                onPress={handleCheckUpdate}
-                action
-                last
-              />
+              <>
+                <SettingsRow
+                  label="Simulated location"
+                  sub="Report a chosen location to every app on this phone"
+                  onPress={() => navigation.navigate('MockLocation')}
+                />
+                <SettingsRow
+                  label="Check for updates"
+                  sub="Download & install the latest build from GitHub"
+                  loading={checkingUpdate}
+                  onPress={handleCheckUpdate}
+                  action
+                  last
+                />
+              </>
             )}
           </View>
         </Animated.View>

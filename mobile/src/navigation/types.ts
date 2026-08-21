@@ -32,6 +32,9 @@ export type MainStackParamList = {
   Doodle: undefined;
   // Trash — soft-deleted notes, restore / delete permanently.
   RecentlyDeleted: undefined;
+  // Android-only system-wide mock location. Renders an "Android only" state on
+  // iOS rather than being hidden, so the entry point doesn't silently vanish.
+  MockLocation: undefined;
   // Bottom-sheet add-task screen. Presented as a transparent modal so
   // HomeScreen stays visible underneath; `date` is the UTC task-day key
   // the new task should be created against (passed from HomeScreen).
