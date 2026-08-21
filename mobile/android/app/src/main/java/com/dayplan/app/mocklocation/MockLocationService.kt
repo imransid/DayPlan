@@ -43,28 +43,12 @@ internal class MockLocationService : Service() {
     private val main = Handler(Looper.getMainLooper())
 
     /**
-     * Seeds the notification and the persisted session record. For a static
-     * session this is also exactly what gets injected.
+     * The live session: fix source, clock baseline and seed target as one
+     * immutable value behind one volatile reference, so a swap is atomic and a
+     * tick can never pair a new source with a stale baseline.
      */
     @Volatile
-    private var target: MockTarget? = null
-
-    /**
-     * Produces the fix for each tick. Static today; route sources slot in here
-     * without the injection loop below changing at all.
-     */
-    @Volatile
-    private var fixSource: FixSource? = null
-
-    /**
-     * Baseline for elapsed time, captured once per session.
-     *
-     * elapsedRealtime rather than uptimeMillis or currentTimeMillis: it counts
-     * through deep sleep (so a screen-off stretch advances position correctly)
-     * and is immune to the wall clock being changed under us.
-     */
-    @Volatile
-    private var sessionStartRealtime: Long = 0L
+    private var session: Session? = null
 
     @Volatile
     private var activeProviders: List<String> = emptyList()
@@ -89,15 +73,15 @@ internal class MockLocationService : Service() {
 
         override fun run() {
             if (!live) return
-            val source = fixSource ?: return
+            // One read: the source and its baseline always belong together.
+            val active = session ?: return
             val lm = locationManager ?: return
 
-            // Recomputed from the wall clock every tick, never accumulated. A
-            // tick dropped to Doze or a slow push therefore costs nothing: the
-            // next fix lands where the elapsed time says it should, instead of
-            // lagging by however long we were stalled.
-            val elapsedMs = SystemClock.elapsedRealtime() - sessionStartRealtime
-            val t = source.fixAt(elapsedMs)
+            // Recomputed from the clock every tick, never accumulated, so a
+            // late or dropped tick costs nothing — the next fix lands where the
+            // elapsed time says it should rather than lagging by the stall.
+            val elapsedMs = SystemClock.elapsedRealtime() - active.startRealtime
+            val t = active.source.fixAt(elapsedMs)
 
             try {
                 val accepted = MockLocationEngine.push(lm, activeProviders, t)
@@ -229,11 +213,10 @@ internal class MockLocationService : Service() {
             return
         }
 
-        target = t
-        installFixSource(StaticFixSource(t), rebaseClock = true)
+        installSession(StaticFixSource(t), seed = t, rebaseClock = true)
         isRunning = true
         MockLocationStore.saveSession(this, t)
-        acquireWakeLock()
+        val wakeLockWarning = acquireWakeLock()
 
         if (injectorThread == null) {
             injectorThread = HandlerThread("dayplan-mock-location").also { it.start() }
@@ -245,27 +228,28 @@ internal class MockLocationService : Service() {
             MockLocationEngine.TAG,
             "session started at ${t.latitude},${t.longitude} on ${activeProviders.joinToString()}"
         )
-        MockLocationStatusBus.publish(MockStatusEvent(MockStatus.RUNNING))
+        MockLocationStatusBus.publish(MockStatusEvent(MockStatus.RUNNING, wakeLockWarning))
         updateNotification(t)
     }
 
     /**
-     * Installs the source the injection loop reads from.
+     * Publishes a new session for the injection loop to read.
      *
      * @param rebaseClock restart elapsed time at zero. Required whenever the new
      * source's geometry differs from the old one, so positions are computed
      * against the right baseline. A static source ignores elapsed time, so it
      * genuinely does not care either way.
      */
-    private fun installFixSource(source: FixSource, rebaseClock: Boolean) {
-        if (rebaseClock) sessionStartRealtime = SystemClock.elapsedRealtime()
-        fixSource = source
+    private fun installSession(source: FixSource, seed: MockTarget, rebaseClock: Boolean) {
+        val startRealtime =
+            if (rebaseClock) SystemClock.elapsedRealtime()
+            else session?.startRealtime ?: SystemClock.elapsedRealtime()
+        session = Session(source, startRealtime, seed)
     }
 
     /** Move the target without tearing down providers or the loop. */
     private fun applyTarget(t: MockTarget) {
-        target = t
-        installFixSource(StaticFixSource(t), rebaseClock = false)
+        installSession(StaticFixSource(t), seed = t, rebaseClock = false)
         MockLocationStore.saveSession(this, t)
         restartInjection()
         updateNotification(t)
@@ -274,8 +258,7 @@ internal class MockLocationService : Service() {
     /** @param finalStatus null to report whatever the real status is once we've stopped. */
     private fun stopSession(finalStatus: MockStatus?, error: String?) {
         retireInjection()
-        target = null
-        fixSource = null
+        session = null
         isRunning = false
 
         locationManager?.let { MockLocationEngine.removeProviders(it, activeProviders) }
@@ -314,13 +297,47 @@ internal class MockLocationService : Service() {
 
     // ── Wake lock ────────────────────────────────────────────────────────────
 
-    private fun acquireWakeLock() {
-        if (wakeLock?.isHeld == true) return
-        val pm = getSystemService(Context.POWER_SERVICE) as? PowerManager ?: return
-        wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, WAKE_LOCK_TAG).apply {
-            setReferenceCounted(false)
-            runCatching { acquire() }
+    /**
+     * @return null on success, or a user-facing warning when the lock could not
+     * be taken.
+     *
+     * Failure is not fatal — the session still runs, and deriving position from
+     * elapsed time means it stays correct rather than drifting. But it does mean
+     * the loop can be suspended with the screen off and the fix go stale, which
+     * the user has no other way to find out about. Previously this swallowed the
+     * failure entirely: acquire() was wrapped in runCatching and nothing ever
+     * checked isHeld afterwards.
+     */
+    private fun acquireWakeLock(): String? {
+        if (wakeLock?.isHeld == true) return null
+
+        val pm = getSystemService(Context.POWER_SERVICE) as? PowerManager
+        if (pm == null) {
+            Log.w(MockLocationEngine.TAG, "no PowerManager; running without a wake lock")
+            return WAKE_LOCK_WARNING
         }
+
+        val lock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, WAKE_LOCK_TAG).apply {
+            setReferenceCounted(false)
+        }
+        wakeLock = lock
+
+        val held = runCatching {
+            lock.acquire()
+            lock.isHeld
+        }.getOrElse { t ->
+            Log.w(MockLocationEngine.TAG, "wake lock acquire threw", t)
+            false
+        }
+
+        if (!held) {
+            Log.w(
+                MockLocationEngine.TAG,
+                "wake lock not held after acquire — the injector may be suspended when the screen is off",
+            )
+            return WAKE_LOCK_WARNING
+        }
+        return null
     }
 
     private fun releaseWakeLock() {
@@ -382,6 +399,16 @@ internal class MockLocationService : Service() {
     companion object {
         private const val NOTIFICATION_ID = 8321
         private const val WAKE_LOCK_TAG = "DayPlan:MockLocation"
+
+        /**
+         * Surfaced on the status bus alongside RUNNING. Most likely cause is an
+         * OEM battery manager, which is why the remedy points at the Doze
+         * exemption the screen already offers.
+         */
+        const val WAKE_LOCK_WARNING =
+            "Android wouldn't let DayPlan keep the CPU awake, so the simulated location " +
+                "may stall while the screen is off. Exempting DayPlan from battery " +
+                "optimisation usually fixes this."
 
         const val ACTION_START = "com.dayplan.app.mocklocation.START"
         const val ACTION_UPDATE = "com.dayplan.app.mocklocation.UPDATE"
