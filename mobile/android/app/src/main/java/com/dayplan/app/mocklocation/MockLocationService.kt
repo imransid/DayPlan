@@ -15,6 +15,7 @@ import android.os.HandlerThread
 import android.os.IBinder
 import android.os.Looper
 import android.os.PowerManager
+import android.os.SystemClock
 import android.util.Log
 import com.dayplan.app.MainActivity
 import com.dayplan.app.R
@@ -41,9 +42,29 @@ internal class MockLocationService : Service() {
     private var injector: Handler? = null
     private val main = Handler(Looper.getMainLooper())
 
-    /** Touched from both the injector thread and the main thread. */
+    /**
+     * Seeds the notification and the persisted session record. For a static
+     * session this is also exactly what gets injected.
+     */
     @Volatile
     private var target: MockTarget? = null
+
+    /**
+     * Produces the fix for each tick. Static today; route sources slot in here
+     * without the injection loop below changing at all.
+     */
+    @Volatile
+    private var fixSource: FixSource? = null
+
+    /**
+     * Baseline for elapsed time, captured once per session.
+     *
+     * elapsedRealtime rather than uptimeMillis or currentTimeMillis: it counts
+     * through deep sleep (so a screen-off stretch advances position correctly)
+     * and is immune to the wall clock being changed under us.
+     */
+    @Volatile
+    private var sessionStartRealtime: Long = 0L
 
     @Volatile
     private var activeProviders: List<String> = emptyList()
@@ -68,8 +89,16 @@ internal class MockLocationService : Service() {
 
         override fun run() {
             if (!live) return
-            val t = target ?: return
+            val source = fixSource ?: return
             val lm = locationManager ?: return
+
+            // Recomputed from the wall clock every tick, never accumulated. A
+            // tick dropped to Doze or a slow push therefore costs nothing: the
+            // next fix lands where the elapsed time says it should, instead of
+            // lagging by however long we were stalled.
+            val elapsedMs = SystemClock.elapsedRealtime() - sessionStartRealtime
+            val t = source.fixAt(elapsedMs)
+
             try {
                 val accepted = MockLocationEngine.push(lm, activeProviders, t)
                 if (accepted == 0) {
@@ -201,6 +230,7 @@ internal class MockLocationService : Service() {
         }
 
         target = t
+        installFixSource(StaticFixSource(t), rebaseClock = true)
         isRunning = true
         MockLocationStore.saveSession(this, t)
         acquireWakeLock()
@@ -219,9 +249,23 @@ internal class MockLocationService : Service() {
         updateNotification(t)
     }
 
+    /**
+     * Installs the source the injection loop reads from.
+     *
+     * @param rebaseClock restart elapsed time at zero. Required whenever the new
+     * source's geometry differs from the old one, so positions are computed
+     * against the right baseline. A static source ignores elapsed time, so it
+     * genuinely does not care either way.
+     */
+    private fun installFixSource(source: FixSource, rebaseClock: Boolean) {
+        if (rebaseClock) sessionStartRealtime = SystemClock.elapsedRealtime()
+        fixSource = source
+    }
+
     /** Move the target without tearing down providers or the loop. */
     private fun applyTarget(t: MockTarget) {
         target = t
+        installFixSource(StaticFixSource(t), rebaseClock = false)
         MockLocationStore.saveSession(this, t)
         restartInjection()
         updateNotification(t)
@@ -231,6 +275,7 @@ internal class MockLocationService : Service() {
     private fun stopSession(finalStatus: MockStatus?, error: String?) {
         retireInjection()
         target = null
+        fixSource = null
         isRunning = false
 
         locationManager?.let { MockLocationEngine.removeProviders(it, activeProviders) }
