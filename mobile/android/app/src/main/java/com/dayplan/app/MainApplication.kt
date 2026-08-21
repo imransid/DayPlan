@@ -5,6 +5,7 @@ import com.dayplan.app.mocklocation.MockLocationEngine
 import com.dayplan.app.mocklocation.MockLocationStore
 import com.dayplan.app.mocklocation.MockLocationPackage
 import com.facebook.react.PackageList
+import com.lugg.RNCConfig.RNCConfigPackage
 import com.facebook.react.ReactApplication
 import com.facebook.react.ReactHost
 import com.facebook.react.ReactNativeHost
@@ -24,6 +25,9 @@ class MainApplication : Application(), ReactApplication {
               // Autolinking only covers node_modules; app-local native modules
               // are registered by hand.
               add(MockLocationPackage())
+              // react-native-config is in node_modules but still not autolinked
+              // on Android — see the note in settings.gradle.
+              add(RNCConfigPackage())
             }
 
         override fun getJSMainModuleName(): String = "index"
