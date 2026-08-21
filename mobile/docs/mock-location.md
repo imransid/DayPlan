@@ -17,6 +17,77 @@ grant precise location + notifications, and select DayPlan under **Developer
 Options → Select mock location app**. Nothing here hides the mock from apps that
 check for it — `Location.isMock()` stays true, by design.
 
+## Route mode: session clock and recovery
+
+Route position is a pure function of elapsed time (see `FixSource`). That makes
+"what is the clock baseline?" the only state that matters, and it has to survive
+three different interruptions. The rules below were decided before route code
+was written, because getting them wrong is silent — the user just ends up in the
+wrong place.
+
+### Sticky restart (process killed, service restarted)
+
+**Restore the clock baseline. Do not restart the route, and do not persist
+progress per tick.**
+
+`sessionStartRealtime` and `System.currentTimeMillis()` are written **once**, at
+session start, next to the rest of the session record. Recovery restores
+`sessionStartRealtime` verbatim, so position is wherever the elapsed time says —
+the route kept driving while we were dead.
+
+Rejected alternative: periodically persisting travelled distance. It would make
+recovery seamless, but it costs a disk write on every tick and introduces a
+second source of truth that can disagree with the clock. That is the accumulator
+problem wearing a different hat.
+
+Consequences, accepted deliberately:
+
+- A brief death (the common case — START_STICKY restarts are usually seconds)
+  produces a small forward jump, not a restart from zero.
+- A long death can land past the destination. The route is then finished and the
+  end-of-route behaviour applies, which is the correct outcome rather than a
+  special case.
+
+Note the bug this exists to prevent: `startSession` rebases the clock to zero
+and START_STICKY recovery goes through `startSession`. Without an explicit
+restore path, process death teleports the user back to the route's start.
+
+### Reboot
+
+`SystemClock.elapsedRealtime()` resets to ~0 on boot, so a stored baseline that
+is **greater than the current elapsed realtime** proves a reboot happened. Route
+through the existing boot-interrupted path: clear the session, post the
+dismissible notice, never auto-resume. `System.currentTimeMillis()` is stored
+alongside only as a cross-check; it is not the baseline, because it moves under
+NTP corrections and manual clock changes.
+
+### Explicit pause
+
+**Pause stores travelled distance, not elapsed time.** Resume converts that
+distance back to an elapsed value under the *currently selected* speed model and
+rebases:
+
+```
+startRealtime = elapsedRealtime() - elapsedForDistance(travelled)
+```
+
+Storing distance rather than time is what makes changing the speed model while
+paused preserve *position*. Storing elapsed time instead would keep the clock
+and move the car.
+
+The two choices differ because the interruptions differ: pause is user-intent
+and may straddle a settings change, sticky recovery is involuntary and must not
+cost per-tick I/O.
+
+### Route file lifetime
+
+Route points live in `filesDir/mock-route-<sessionId>.json`, too large for
+SharedPreferences, which holds only the session id, the clocks and the settings.
+The file is deleted on stop, and stale files are swept at process start in
+`MainApplication.onCreate()` alongside the orphan-provider sweep — same
+reasoning: a crash must not leave debris that only a visit to the feature screen
+would clear.
+
 ## Device checklist
 
 Nothing below has been run yet. Every box needs a real device; the emulator's
