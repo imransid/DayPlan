@@ -38,6 +38,13 @@ internal object MockLocationStatusBus {
     private val listeners = CopyOnWriteArrayList<(MockStatusEvent) -> Unit>()
 
     /**
+     * Separate from the status listeners: progress fires roughly once a second
+     * for the whole of a route, and folding it into the status channel would
+     * mean every status subscriber re-rendering on every tick.
+     */
+    private val progressListeners = CopyOnWriteArrayList<(MockProgress) -> Unit>()
+
+    /**
      * Last event published, used only to suppress duplicate emissions — a
      * long-running session would otherwise push an identical RUNNING event on
      * every tick. Null until the service publishes something.
@@ -49,6 +56,21 @@ internal object MockLocationStatusBus {
     fun subscribe(listener: (MockStatusEvent) -> Unit): () -> Unit {
         listeners.add(listener)
         return { listeners.remove(listener) }
+    }
+
+    /** @return an unsubscribe function. */
+    fun subscribeProgress(listener: (MockProgress) -> Unit): () -> Unit {
+        progressListeners.add(listener)
+        return { progressListeners.remove(listener) }
+    }
+
+    /**
+     * Called from the injector thread. Never deduplicated — successive progress
+     * values legitimately differ — and never blocking: the injection loop must
+     * not be slowed by a slow or absent subscriber.
+     */
+    fun publishProgress(progress: MockProgress) {
+        progressListeners.forEach { listener -> runCatching { listener(progress) } }
     }
 
     fun publish(event: MockStatusEvent) {

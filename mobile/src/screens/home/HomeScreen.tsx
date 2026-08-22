@@ -39,6 +39,10 @@ import {
   useUpdateProfileMutation,
 } from '../../store/api/api';
 import { syncHourlyAlarms } from '../../services/notifications';
+import {
+  loadAutoPostConfig,
+  scheduleAutoPosts,
+} from '../../services/scheduledPosts';
 import { utcTaskDayStartIso, localCalendarDateKey } from '../../utils/utcTaskDay';
 import type { MainStackParamList } from '../../navigation/types';
 
@@ -130,6 +134,29 @@ export function HomeScreen() {
   }, []);
 
   useFocusEffect(useCallback(() => { checkDayRollover(); }, [checkDayRollover]));
+
+  // Re-arm the OS-held daily auto-post triggers on launch. notifee DAILY
+  // triggers are cleared on device REBOOT and on app UPDATE/reinstall, and are
+  // otherwise only (re)scheduled from the Settings screen — so without this the
+  // background "post at my set time" silently stops after a reboot until the
+  // user happens to revisit Settings. Re-arming here (once the profile times
+  // resolve) makes the closed-app path durable. No-op unless the user enabled
+  // auto-post; cancelAutoPosts on logout still clears it. Keyed on the times
+  // (not the whole `me` object) so an unrelated profile edit — e.g. the tz-sync
+  // above — doesn't needlessly re-fire this; cancelTriggerNotification inside
+  // scheduleOne dedupes so re-arming with the same times is harmless anyway.
+  const goalPostTime = me?.goalPostTime;
+  const workUpdateTime = me?.workUpdateTime;
+  useEffect(() => {
+    if (!goalPostTime && !workUpdateTime) return;
+    loadAutoPostConfig()
+      .then((cfg) => {
+        if (cfg.enabled) {
+          return scheduleAutoPosts(goalPostTime, workUpdateTime);
+        }
+      })
+      .catch(() => undefined);
+  }, [goalPostTime, workUpdateTime]);
 
   useEffect(() => {
     const sub = AppState.addEventListener('change', (state: AppStateStatus) => {

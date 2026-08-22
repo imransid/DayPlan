@@ -7,6 +7,7 @@ import {
 
 import NativeMockLocation, {
   type MockLocationOptions,
+  type RouteOptions,
 } from '../../specs/NativeMockLocation';
 
 /**
@@ -41,6 +42,7 @@ export type MockLocationErrorCode =
   | 'E_MOCK_NOTIFICATIONS'
   | 'E_MOCK_NOT_SELECTED'
   | 'E_MOCK_NOT_RUNNING'
+  | 'E_MOCK_WRONG_MODE'
   | 'E_MOCK_SERVICE'
   | 'E_MOCK_SETTINGS'
   | 'E_MOCK_UNSUPPORTED';
@@ -55,6 +57,53 @@ export interface MockLocationTarget {
   intervalMs?: number;
   /** Place name shown in the persistent notification. */
   label?: string;
+}
+
+/** Which kind of session is live. 'NONE' when nothing is running. */
+export type MockSessionMode = 'STATIC' | 'ROUTE' | 'NONE';
+
+export type RouteEndBehaviour = 'STOP' | 'LOOP' | 'PING_PONG';
+
+export interface MockRouteTarget {
+  startLatitude: number;
+  startLongitude: number;
+  endLatitude: number;
+  endLongitude: number;
+  /** Defaults to STOP: hold at the destination rather than reverting. */
+  endBehaviour?: RouteEndBehaviour;
+  /** Cruise speed, ramped over the first and last ~50 m. Defaults to 50. */
+  speedKmh?: number;
+  altitude?: number;
+  accuracy?: number;
+  intervalMs?: number;
+  label?: string;
+}
+
+/** Emitted about once a second while a route is running. */
+export interface MockRouteProgress {
+  /** 0 at the start, 1 at the destination. */
+  fraction: number;
+  metresTravelled: number;
+  metresRemaining: number;
+  speedMps: number;
+  bearingDegrees: number;
+  /** Milliseconds to the end of the current leg, or null if unknown. */
+  etaMs: number | null;
+  latitude: number;
+  longitude: number;
+  /**
+   * True once a STOP route has arrived. The session keeps running and holds the
+   * final fix — it does not revert to the real location.
+   */
+  finished: boolean;
+  /** True while driving a ping-pong return leg, back towards the start. */
+  reversed: boolean;
+  /**
+   * True while the route is held mid-journey. The frozen fix is still being
+   * injected — pausing injection would let it go stale and consumers fall back
+   * to the real GPS within seconds.
+   */
+  paused: boolean;
 }
 
 export interface MockStatusEvent {
@@ -109,6 +158,7 @@ const native = Platform.OS === 'android' ? NativeMockLocation : null;
 export const isSupported: boolean = native != null;
 
 const STATUS_EVENT = 'mockLocationStatusChanged';
+const PROGRESS_EVENT = 'mockLocationProgress';
 
 const UNSUPPORTED_RESULT: MockActionResult = {
   ok: false,
@@ -149,6 +199,7 @@ function toFailure(error: unknown): MockActionResult {
     'E_MOCK_NOTIFICATIONS',
     'E_MOCK_NOT_SELECTED',
     'E_MOCK_NOT_RUNNING',
+    'E_MOCK_WRONG_MODE',
     'E_MOCK_SERVICE',
     'E_MOCK_SETTINGS',
     'E_MOCK_UNSUPPORTED',
@@ -173,6 +224,23 @@ export async function getStatus(): Promise<MockStatus> {
   } catch {
     // A wedged native call shouldn't strand the UI with no status at all.
     return 'UNSUPPORTED';
+  }
+}
+
+/**
+ * Which kind of session is live.
+ *
+ * The screen uses this to open on the tab matching what is actually running —
+ * defaulting to Static while a route ran was what made an accidental update()
+ * reachable in the first place.
+ */
+export async function getSessionMode(): Promise<MockSessionMode> {
+  if (!native) return 'NONE';
+  try {
+    const raw = await native.getSessionMode();
+    return raw === 'STATIC' || raw === 'ROUTE' ? raw : 'NONE';
+  } catch {
+    return 'NONE';
   }
 }
 
@@ -233,6 +301,28 @@ export function addStatusListener(
     (event: { status?: string; error?: string | null }) => {
       if (!isMockStatus(event?.status)) return;
       listener({ status: event.status, error: event.error ?? null });
+    },
+  );
+  return () => subscription.remove();
+}
+
+/**
+ * Subscribe to route progress.
+ *
+ * Nothing is emitted for static sessions, and the native side drops events
+ * entirely when no React instance is attached, so the injection loop is never
+ * gated on JS.
+ */
+export function addProgressListener(
+  listener: (progress: MockRouteProgress) => void,
+): () => void {
+  if (!native) return () => undefined;
+  const emitter = new NativeEventEmitter(native as unknown as NativeModule);
+  const subscription = emitter.addListener(
+    PROGRESS_EVENT,
+    (event: MockRouteProgress) => {
+      if (event == null || typeof event.fraction !== 'number') return;
+      listener(event);
     },
   );
   return () => subscription.remove();
@@ -337,6 +427,40 @@ export async function start(
   }
 }
 
+/**
+ * Starts a moving session along a straight (great-circle) line.
+ *
+ * Same permission flow as {@link start}; the failure codes are identical, so
+ * callers can share their routing logic.
+ */
+export async function startRoute(
+  target: MockRouteTarget,
+): Promise<MockActionResult> {
+  if (!native) return UNSUPPORTED_RESULT;
+
+  const permission = await ensurePermissions();
+  if (!permission.granted) {
+    return {
+      ok: false,
+      code:
+        permission.permission === 'notifications'
+          ? 'E_MOCK_NOTIFICATIONS'
+          : 'E_MOCK_PERMISSION',
+      message: permission.blockedPermanently
+        ? 'That permission is blocked. Turn it on in DayPlan’s settings.'
+        : 'That permission is needed before a location can be simulated.',
+      blockedPermanently: permission.blockedPermanently,
+    };
+  }
+
+  try {
+    await native.startRoute({ ...target } as RouteOptions);
+    return { ok: true };
+  } catch (error) {
+    return toFailure(error);
+  }
+}
+
 /** Move the target without restarting the session. */
 export async function update(
   target: MockLocationTarget,
@@ -344,6 +468,28 @@ export async function update(
   if (!native) return UNSUPPORTED_RESULT;
   try {
     await native.update(toOptions(target));
+    return { ok: true };
+  } catch (error) {
+    return toFailure(error);
+  }
+}
+
+/** Freezes a route in place without letting the fix go stale. */
+export async function pauseRoute(): Promise<MockActionResult> {
+  if (!native) return UNSUPPORTED_RESULT;
+  try {
+    await native.pauseRoute();
+    return { ok: true };
+  } catch (error) {
+    return toFailure(error);
+  }
+}
+
+/** Resumes a paused route from exactly where it stopped. */
+export async function resumeRoute(): Promise<MockActionResult> {
+  if (!native) return UNSUPPORTED_RESULT;
+  try {
+    await native.resumeRoute();
     return { ok: true };
   } catch (error) {
     return toFailure(error);

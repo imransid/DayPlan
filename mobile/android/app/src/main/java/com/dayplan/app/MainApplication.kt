@@ -2,8 +2,10 @@ package com.dayplan.app
 
 import android.app.Application
 import com.dayplan.app.mocklocation.MockLocationEngine
+import com.dayplan.app.mocklocation.MockLocationStore
 import com.dayplan.app.mocklocation.MockLocationPackage
 import com.facebook.react.PackageList
+import com.lugg.RNCConfig.RNCConfigPackage
 import com.facebook.react.ReactApplication
 import com.facebook.react.ReactHost
 import com.facebook.react.ReactNativeHost
@@ -23,6 +25,9 @@ class MainApplication : Application(), ReactApplication {
               // Autolinking only covers node_modules; app-local native modules
               // are registered by hand.
               add(MockLocationPackage())
+              // react-native-config is in node_modules but still not autolinked
+              // on Android — see the note in settings.gradle.
+              add(RNCConfigPackage())
             }
 
         override fun getJSMainModuleName(): String = "index"
@@ -53,5 +58,21 @@ class MainApplication : Application(), ReactApplication {
     // which makes a safety net depend on the JS import graph. This has no React
     // dependency, so process start is the right place for it.
     runCatching { MockLocationEngine.sweepOrphanProviders(this) }
+
+    // Same reasoning for the route geometry a session writes to internal
+    // storage: a crash must not leave debris that only a visit to the feature
+    // screen would clear.
+    //
+    // But NOT unconditionally. Application.onCreate runs before any Service in
+    // the process, and a START_STICKY restart after process death recreates the
+    // process — so sweeping everything here would delete the route file before
+    // MockLocationService could read it back, breaking recovery in precisely
+    // the case it exists for. Keep the file belonging to a session still marked
+    // active; everything else is debris.
+    runCatching {
+        val active =
+            if (MockLocationStore.isActive(this)) MockLocationStore.sessionId(this) else null
+        MockLocationStore.sweepRouteFiles(this, keepSessionId = active)
+    }
   }
 }

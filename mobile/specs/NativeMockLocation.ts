@@ -47,9 +47,31 @@ export type MockLocationOptions = {
   label?: string;
 };
 
+/**
+ * A moving location. Straight-line (great-circle) geometry is generated
+ * natively from the two endpoints — no network. Road geometry arrives in a
+ * later step and substitutes the points without changing this shape.
+ */
+export type RouteOptions = {
+  startLatitude: number;
+  startLongitude: number;
+  endLatitude: number;
+  endLongitude: number;
+  /** 'STOP' (default), 'LOOP' or 'PING_PONG'. */
+  endBehaviour?: string;
+  /** Cruise speed. Ramped over the first and last ~50 m. Defaults to 50. */
+  speedKmh?: number;
+  altitude?: number;
+  accuracy?: number;
+  intervalMs?: number;
+  label?: string;
+};
+
 export interface Spec extends TurboModule {
   /** True when DayPlan holds the OPSTR_MOCK_LOCATION app op. */
   isMockLocationEnabled(): Promise<boolean>;
+  /** 'STATIC', 'ROUTE', or 'NONE' when nothing is running. */
+  getSessionMode(): Promise<string>;
   /** One of MockStatus — see src/services/mockLocation.ts for the union. */
   getStatus(): Promise<string>;
   /** Settings.ACTION_APPLICATION_DEVELOPMENT_SETTINGS. */
@@ -80,6 +102,15 @@ export interface Spec extends TurboModule {
   clearBootInterrupted(): Promise<void>;
 
   start(options: MockLocationOptions): Promise<void>;
+  /** Starts a moving session. Progress arrives on 'mockLocationProgress'. */
+  startRoute(options: RouteOptions): Promise<void>;
+  /**
+   * Freezes a route where it is. The session keeps injecting the frozen fix —
+   * stopping injection would let it go stale and consumers fall back to real GPS.
+   */
+  pauseRoute(): Promise<void>;
+  /** Resumes from exactly where the pause left off, preserving position. */
+  resumeRoute(): Promise<void>;
   /** Move the target without tearing down the providers or the service. */
   update(options: MockLocationOptions): Promise<void>;
   stop(): Promise<void>;

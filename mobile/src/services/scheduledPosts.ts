@@ -24,14 +24,16 @@ import { config } from "../config";
  * fire a notifee trigger at the user's goal/work-update time, and when that
  * trigger fires — EVEN IF THE APP IS CLOSED — notifee runs a short background
  * JS task (verified in NotifeeEventSubscriber: not-in-foreground →
- * startHeadlessTask(..., 60000)). That task calls the SAME endpoint the manual
- * "Send now" button uses (POST /discord/test-publish → publishNow), which posts
- * unconditionally — so the phone, having already fired at the right local time,
- * is the reliable clock. See publishScheduledKind for why NOT run-mine.
+ * startHeadlessTask(..., 60000)). That task calls POST /scheduler/run-mine-kind
+ * for the kind whose trigger fired — the phone, having already fired at the
+ * right local time, is the reliable clock. See publishScheduledKind for why
+ * run-mine-kind (and not test-publish or plain run-mine).
  *
- * publishNow writes the per-day success marker, so the foreground nudge and any
- * server cron (both idempotent on /scheduler/run-mine) skip afterwards — no
- * double-posting.
+ * run-mine-kind is idempotent per (user, kind, local-day) and writes the
+ * per-day success marker, so the foreground nudge and any server cron (both
+ * idempotent on the same marker) skip afterwards — no double-posting. It is
+ * NOT the manual "Send now" path (that one is intentionally excluded from the
+ * marker so testing the button can't suppress the day's automatic post).
  *
  * Platform reality:
  *  - Android: fires and posts with the app closed (AlarmManager allowWhileIdle
@@ -215,26 +217,29 @@ const KIND_BY_TRIGGER_ID: Record<string, "goal" | "work_update"> = {
 };
 
 /**
- * Publish one kind via the SAME endpoint the manual "Send now" button uses
- * (POST /discord/test-publish → publishNow).
+ * Publish one kind via POST /scheduler/run-mine-kind.
  *
- * Why test-publish and NOT /scheduler/run-mine: run-mine re-decides "is this
- * due?" using the user's *stored profile* timezone (localTime >= HH:mm). The OS
- * alarm here already fired at the *device's* local time, so if the device tz and
- * the saved profile tz differ (traveling, wrong tz at signup) — or across a DST
- * shift — run-mine would compute a different clock and SKIP the post even though
- * the trigger fired. That was the "auto never posts but manual works" bug: the
- * manual button hits test-publish, which posts unconditionally. So do the same.
+ * Why run-mine-kind and NOT /scheduler/run-mine: plain run-mine re-decides "is
+ * this due?" using the user's *stored profile* timezone (localTime >= HH:mm).
+ * The OS alarm here already fired at the *device's* local time, so if the device
+ * tz and the saved profile tz differ (traveling, wrong tz at signup) — or across
+ * a DST shift — run-mine would compute a different clock and SKIP the post even
+ * though the trigger fired. That was the "auto never posts but manual works"
+ * bug. run-mine-kind skips that tz due-gate (the phone already decided it's
+ * time) but keeps the per-day idempotency.
  *
- * publishNow writes the per-day success marker, so the foreground nudge and any
- * server cron (both idempotent on /scheduler/run-mine) skip afterwards — no
- * double-post. A daily trigger fires once, so it can't double-post itself.
+ * Why run-mine-kind and NOT the manual test-publish/publishNow: publishNow is
+ * the "Send now" button — it logs status:"manual" and deliberately does NOT set
+ * the per-day success marker, so it can't dedupe. run-mine-kind writes the
+ * "success" marker, so the foreground nudge and any server cron (idempotent on
+ * the same marker) skip afterwards — no double-post. A daily trigger fires once,
+ * so it can't double-post itself.
  */
 async function publishScheduledKind(kind: "goal" | "work_update"): Promise<void> {
   const token = await getAuthToken();
   if (!token) return; // logged out — nothing to post as
   try {
-    await fetch(`${config.apiUrl}/discord/test-publish`, {
+    await fetch(`${config.apiUrl}/scheduler/run-mine-kind`, {
       method: "POST",
       headers: {
         Authorization: `Bearer ${token}`,

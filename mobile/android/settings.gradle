@@ -3,4 +3,17 @@ plugins { id("com.facebook.react.settings") }
 extensions.configure(com.facebook.react.ReactSettingsExtension){ ex -> ex.autolinkLibrariesFromCommand() }
 rootProject.name = 'com.dayplan.app'
 include ':app'
+
+// react-native-config is NOT autolinked on Android, so it is linked by hand.
+//
+// The RN CLI's package-class detection (cli-platform-android matchClassName)
+// only recognises `implements ReactPackage` or `extends TurboReactPackage`.
+// react-native-config 1.6.1 declares `extends BaseReactPackage` — RN 0.76's
+// replacement for TurboReactPackage — so detection fails, dependencyConfig
+// returns null, and the module was never registered. It bails before reading
+// any packageImportPath override, so an app-level react-native.config.js
+// cannot fix it either.
+include ':react-native-config'
+project(':react-native-config').projectDir =
+    new File(rootProject.projectDir, '../node_modules/react-native-config/android')
 includeBuild('../node_modules/@react-native/gradle-plugin')
